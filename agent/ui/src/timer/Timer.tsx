@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // Countdown widget rendered in the "timer" window. Polls the agent once per
 // second; Rust's timer::run_watcher handles show/hide so we just render the
@@ -9,6 +10,7 @@ interface TimerInfo {
   remainingSeconds: number;
   todayUsedMinutes: number;
   dailyLimitMinutes: number;
+  agentVersion: string;
 }
 
 export function Timer() {
@@ -38,11 +40,24 @@ export function Timer() {
     info.dailyLimitMinutes > 0 ? formatMinutes(info.dailyLimitMinutes) : "없음"
   }`;
 
+  const minimize = () => {
+    getCurrentWindow().minimize().catch(() => {});
+  };
+
   return (
     <div style={container}>
+      <div
+        style={minimizeBtn}
+        onClick={minimize}
+        title="내리기"
+        aria-label="내리기"
+      >
+        –
+      </div>
       <div style={label}>{labelFor(info.kind)}</div>
       <div style={timeStyle}>{formatTime(info.remainingSeconds)}</div>
       <div style={usage}>{usageLine}</div>
+      <div style={version}>v{info.agentVersion}</div>
     </div>
   );
 }
@@ -85,6 +100,23 @@ const container: React.CSSProperties = {
   fontFamily: "system-ui, -apple-system, sans-serif",
   userSelect: "none",
   cursor: "default",
+  position: "relative",
+};
+
+const minimizeBtn: React.CSSProperties = {
+  position: "absolute",
+  top: 4,
+  right: 6,
+  width: 22,
+  height: 22,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: 16,
+  color: "#d1d5db",
+  cursor: "pointer",
+  borderRadius: 4,
+  lineHeight: 1,
 };
 
 const label: React.CSSProperties = {
@@ -106,4 +138,11 @@ const usage: React.CSSProperties = {
   opacity: 0.75,
   marginTop: 4,
   fontVariantNumeric: "tabular-nums",
+};
+
+const version: React.CSSProperties = {
+  fontSize: 9,
+  opacity: 0.4,
+  marginTop: 2,
+  textAlign: "right",
 };

@@ -131,7 +131,16 @@ fn run_service() -> Result<()> {
         process_id: None,
     })?;
 
+    // Service-side auto-updater: a dedicated thread polls GitHub Releases,
+    // verifies the signature, and runs the installer silently (LocalSystem →
+    // no UAC). Runs in parallel with the child supervisor.
+    let (upd_tx, upd_rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || crate::service_updater::run_updater(upd_rx));
+
     supervise_user_session_child(&shutdown_rx);
+
+    // Ask updater to stop along with the service.
+    let _ = upd_tx.send(());
 
     status_handle.set_service_status(ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,

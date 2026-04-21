@@ -10,7 +10,7 @@ use crate::{schedule, storage::AppState};
 
 const TIMER_LABEL: &str = "timer";
 const TIMER_W: f64 = 240.0;
-const TIMER_H: f64 = 92.0;
+const TIMER_H: f64 = 108.0;
 const SIDE_MARGIN: f64 = 16.0;
 // Extra reserved area for the Windows taskbar (40-48px at common DPI) + a
 // small visual gap so the countdown sits above it rather than behind it.
@@ -19,18 +19,27 @@ const BOTTOM_MARGIN: f64 = 72.0;
 
 pub async fn show(app: &AppHandle) -> Result<()> {
     if let Some(w) = app.get_webview_window(TIMER_LABEL) {
+        // Respect a user-minimized window: don't pop back up while it's
+        // intentionally parked in the taskbar. position+show is only for
+        // re-emerging from a hidden state (e.g. after lock → unlock).
+        if w.is_minimized().unwrap_or(false) {
+            return Ok(());
+        }
         position_bottom_right(&w)?;
         w.show()?;
         return Ok(());
     }
 
     let w = WebviewWindowBuilder::new(app, TIMER_LABEL, WebviewUrl::default())
-        .title("TickTock Timer")
+        .title("TickTock")
         .inner_size(TIMER_W, TIMER_H)
         .resizable(false)
         .decorations(false)
         .always_on_top(true)
-        .skip_taskbar(true)
+        // Keep the taskbar icon so the child can restore the timer after
+        // minimizing it — minimizing it "내린다" is the UX they expect.
+        .skip_taskbar(false)
+        .minimizable(true)
         .focused(false)
         .visible(false)
         .build()?;

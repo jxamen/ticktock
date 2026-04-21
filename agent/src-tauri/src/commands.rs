@@ -128,6 +128,12 @@ pub async fn setup_pin_and_unlock(
     }
     let hash = pin::hash(&pin).map_err(s)?;
     state.kv_set("pin_hash", &hash).await.map_err(s)?;
+    // Record the Windows user who set up the PIN — the agent will only run
+    // under this account from now on (other sessions exit at boot).
+    #[cfg(windows)]
+    if let Ok(username) = crate::current_user::current_username() {
+        let _ = state.kv_set("primary_user", &username).await;
+    }
     if state.kv_get("device_id").await.map_err(s)?.is_some() {
         lock::overlay::hide(&app).await.map_err(s)?;
         state.set_locked(false, LockReason::Manual).await;
@@ -182,6 +188,7 @@ pub struct TimerInfo {
     pub remaining_seconds: i64,
     pub today_used_minutes: u32,
     pub daily_limit_minutes: u32,
+    pub agent_version: String,
 }
 
 // Describes why the overlay is currently up, so the child can see what they
@@ -220,6 +227,8 @@ pub async fn get_timer_info(state: State<'_, AppState>) -> Result<Option<TimerIn
     let used = state.today_used_minutes().await;
     let limit = schedule.daily_limit_minutes;
 
+    let version = env!("CARGO_PKG_VERSION").to_string();
+
     // Priority: one-time-PIN session > daily limit > schedule-window end.
     if let Some(remaining) = state.session_remaining_seconds().await {
         return Ok(Some(TimerInfo {
@@ -227,6 +236,7 @@ pub async fn get_timer_info(state: State<'_, AppState>) -> Result<Option<TimerIn
             remaining_seconds: remaining,
             today_used_minutes: used,
             daily_limit_minutes: limit,
+            agent_version: version,
         }));
     }
 
@@ -237,6 +247,7 @@ pub async fn get_timer_info(state: State<'_, AppState>) -> Result<Option<TimerIn
             remaining_seconds: (remaining_minutes as i64) * 60,
             today_used_minutes: used,
             daily_limit_minutes: limit,
+            agent_version: version,
         }));
     }
 
@@ -248,6 +259,7 @@ pub async fn get_timer_info(state: State<'_, AppState>) -> Result<Option<TimerIn
             remaining_seconds: secs,
             today_used_minutes: used,
             daily_limit_minutes: limit,
+            agent_version: version,
         }));
     }
 
@@ -322,6 +334,35 @@ pub async fn handle_remote_command(
                 anyhow::bail!("adjustOneTimePin: minutes must be >= 1");
             }
             state.adjust_session_minutes(minutes).await?;
+        }
+        "unregister" => {
+            log::info!("unregister command received; wiping and restarting");
+            // Lock screen first so a surprise deregister doesn't leave the PC
+            // wide-open between now and the respawn.
+            let _ = lock::overlay::show(app).await;
+            state.set_locked(true, LockReason::Manual).await;
+            state.wipe_all().await?;
+            // Give the RTDB consume-ack a moment before we die.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            std::process::exit(0);
+        }
+        "uninstallAgent" => {
+            log::info!("uninstallAgent command received; launching NSIS uninstaller");
+            state.wipe_all().await?;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // NSIS puts uninstall.exe next to the main exe in the install dir.
+            // /S = silent. The uninstaller stops the service (PREUNINSTALL
+            // hook), deletes files, removes the service, then deletes itself.
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(dir) = exe.parent() {
+                    let uninstaller = dir.join("uninstall.exe");
+                    let _ = std::process::Command::new(&uninstaller).arg("/S").spawn();
+                }
+            }
+            // The uninstaller will kill us when the service stops; exit
+            // explicitly in case the spawn above failed.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            std::process::exit(0);
         }
         "resetTodayUsage" => {
             let today = state.reset_today_usage().await?;

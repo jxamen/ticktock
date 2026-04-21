@@ -12,8 +12,18 @@
     "android": {
       "package": "com.ticktock.mobile"
     },
-    "plugins": [],
+    "plugins": ["expo-updates"],
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/REPLACE_WITH_PROJECT_ID",
+      "fallbackToCacheTimeout": 0
+    },
     "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_PROJECT_ID"
+      },
       "firebase": {
         "apiKey": "AIzaSyB-VLXcCpPoyRKyU7h2U-ZvnJb9q8fZWho",
         "authDomain": "ticktock-bc713.firebaseapp.com",

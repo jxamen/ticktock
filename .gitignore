@@ -42,6 +42,11 @@ firebase-debug.*.log
 # Claude Code local config
 .claude/
 
+# Release artifacts — keep them out of git; distribute via GitHub Releases instead.
+releases/
+# Release manifest — regenerated each release by release.ps1, no need to track.
+latest.json
+
 # IDE
 .vscode/
 .idea/

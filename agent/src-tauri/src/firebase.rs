@@ -46,6 +46,16 @@ async fn listen_once(app: &AppHandle, state: &AppState) -> Result<()> {
         }
     };
 
+    // Diagnostic: hit RTDB once with REST before opening the SSE stream.
+    // 200 = auth + rules OK (stream issue is elsewhere).
+    // 401/403 = token or rules problem (stream will close immediately).
+    let check_url = format!("{}/devices/{}.json?auth={}", RTDB_URL, device_id, token);
+    match reqwest::Client::new().get(&check_url).send().await {
+        Ok(r) => log::info!("rtdb REST check: {} {}", r.status().as_u16(), r.status().canonical_reason().unwrap_or("")),
+        Err(e) => log::warn!("rtdb REST check failed: {e:#}"),
+    }
+    log::info!("opening SSE stream for device {device_id}");
+
     let url = format!("{}/devices/{}.json?auth={}", RTDB_URL, device_id, token);
     let client = ClientBuilder::for_url(&url)?
         .reconnect(

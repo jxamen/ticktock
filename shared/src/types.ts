@@ -54,7 +54,9 @@ export type CommandType =
   | "issueOneTimePin"
   | "revokeOneTimePin"
   | "adjustOneTimePin"
-  | "resetTodayUsage";
+  | "resetTodayUsage"
+  | "unregister"
+  | "uninstallAgent";
 
 export interface BaseCommand {
   type: CommandType;
@@ -118,6 +120,24 @@ export interface ResetTodayUsageCommand extends BaseCommand {
   payload: Record<string, never>;
 }
 
+// Tells the agent to wipe its local DB and exit. The Windows Service then
+// respawns it in a fresh "needs pairing" state. The parent app removes the
+// device nodes from RTDB shortly after so it disappears from the devices list.
+// Use this when the parent wants to hand the PC to a new pairing without
+// uninstalling TickTock — the overlay stays up (fail-closed).
+export interface UnregisterCommand extends BaseCommand {
+  type: "unregister";
+  payload: Record<string, never>;
+}
+
+// Tells the agent to run the NSIS silent uninstaller, which stops and removes
+// the service, deletes the binaries, and removes all local data. The overlay
+// disappears entirely. Use this to fully release the PC from TickTock.
+export interface UninstallAgentCommand extends BaseCommand {
+  type: "uninstallAgent";
+  payload: Record<string, never>;
+}
+
 export type Command =
   | LockCommand
   | UnlockCommand
@@ -127,7 +147,9 @@ export type Command =
   | IssueOneTimePinCommand
   | RevokeOneTimePinCommand
   | AdjustOneTimePinCommand
-  | ResetTodayUsageCommand;
+  | ResetTodayUsageCommand
+  | UnregisterCommand
+  | UninstallAgentCommand;
 
 // Usage: per-day, per-process, seconds of active (non-idle) foreground time.
 export type UsageByProcess = Record<string, number>; // processName -> seconds

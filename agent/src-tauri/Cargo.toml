@@ -1,6 +1,6 @@
 [package]
 name = "ticktock-agent"
-version = "0.1.0"
+version = "0.1.6"
 edition = "2021"
 rust-version = "1.77"
 
@@ -12,7 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
@@ -24,9 +24,13 @@ log = "0.4"
 env_logger = "0.11"
 
 # Firebase RTDB: REST + SSE streaming
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream", "blocking"], default-features = false }
 eventsource-client = "0.13"
 futures = "0.3"
+
+# Signature verification for service-side auto-updates (same .sig format as
+# tauri-plugin-updater produces; same pubkey as in tauri.conf.json).
+minisign-verify = "0.2"
 
 # Storage
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -51,6 +55,7 @@ windows = { version = "0.61", features = [
     "Win32_System_Threading",
     "Win32_System_ProcessStatus",
     "Win32_System_SystemInformation",
+    "Win32_System_WindowsProgramming",
     "Win32_System_Shutdown",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
@@ -59,3 +64,4 @@ windows = { version = "0.61", features = [
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+

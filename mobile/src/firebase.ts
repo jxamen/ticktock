@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 // initializeAuth() with ReactNativeAsyncStorage so state persists across
 // restarts.
 import { initializeAuth, getReactNativePersistence } from "firebase/auth";
-import { getDatabase, ref, set, push, serverTimestamp, onValue } from "firebase/database";
+import { getDatabase, ref, set, push, remove, serverTimestamp, onValue } from "firebase/database";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import type { Command, CommandType, DeviceId, Schedule } from "@ticktock/shared";
@@ -48,6 +48,28 @@ export async function issueOneTimePin(
   const pin = Math.floor(1000 + Math.random() * 9000).toString();
   await issueCommand(deviceId, "issueOneTimePin", { pin, minutes }, issuedBy);
   return pin;
+}
+
+// Re-pair: wipe the agent's data (PIN, schedule, usage, device_id) and send
+// it back to pairing-code state. Overlay stays up — this is for "hand this PC
+// to a new pairing" scenarios. Parent's device entry in RTDB is also removed.
+export async function unregisterDevice(deviceId: DeviceId, issuedBy: string) {
+  await issueCommand(deviceId, "unregister", {}, issuedBy);
+  await new Promise((r) => setTimeout(r, 3000));
+  await remove(ref(db, paths.userDeviceRole(issuedBy, deviceId)));
+  await remove(ref(db, paths.device(deviceId)));
+}
+
+// Full uninstall: agent runs the NSIS silent uninstaller, removing the
+// service and all binaries. Overlay disappears — PC is no longer managed.
+export async function uninstallDeviceAgent(
+  deviceId: DeviceId,
+  issuedBy: string,
+) {
+  await issueCommand(deviceId, "uninstallAgent", {}, issuedBy);
+  await new Promise((r) => setTimeout(r, 5000));
+  await remove(ref(db, paths.userDeviceRole(issuedBy, deviceId)));
+  await remove(ref(db, paths.device(deviceId)));
 }
 
 // Pair an agent by claiming the 6-digit code it displayed. Returns the new

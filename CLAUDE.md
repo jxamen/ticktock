@@ -154,6 +154,14 @@ npx expo run:android
 cd shared && npm run build
 ```
 
+## 배포 시나리오 (v1 실사용)
+
+**자녀 전용 PC 가 아니라, 한 대 PC 에 Windows 계정이 2개 (자녀 / 부모) 공존하는 구성** 이다. 부모 계정은 관리자, 자녀 계정은 표준 사용자. TickTock 은 자녀 계정에서만 동작해야 하며, 부모가 계정 전환으로 자리에 앉았을 때는 오버레이가 뜨면 안 된다.
+
+- Windows Service (LocalSystem) + Session Spawner 가 Win32 `WTSGetActiveConsoleSessionId` 로 현재 console session 에 user-session child 를 spawn — 이 때문에 부모 세션에서도 child 가 뜨려고 함.
+- **Primary-user 가드**: 첫 실행(PIN 설정)을 완료한 Windows 사용자명을 kv 의 `primary_user` 로 기록. bootstrap 에서 현재 user 와 비교 후 다르면 즉시 `exit(0)` — service 는 respawn 하지만 바로 또 죽어 오버레이 노출 안 됨. release 빌드에만 적용 (dev 는 개발 편의로 예외).
+- 자녀 세션으로 Windows 전환하면 agent 가 정상 동작, 부모 세션에서는 child process 가 조용히 끝난다.
+
 ## Key decisions & rationale
 
 - **Tauri + Rust**: RN과 React 컴포넌트/TS 타입 공유, ~5MB 바이너리, `windows` crate로 Win32 풀접근.

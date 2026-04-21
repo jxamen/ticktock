@@ -6,6 +6,10 @@ import {
   StyleSheet,
   Alert,
   ScrollView,
+  FlatList,
+  Dimensions,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { onValue, ref } from "firebase/database";
@@ -17,6 +21,8 @@ import {
   issueOneTimePin,
   subscribeToSchedule,
   subscribeToState,
+  uninstallDeviceAgent,
+  unregisterDevice,
 } from "../firebase";
 import {
   paths,
@@ -37,8 +43,11 @@ const OTP_PRESETS: { minutes: number; label: string }[] = [
   { minutes: 180, label: "3시간" },
 ];
 
+const SCREEN_WIDTH = Dimensions.get("window").width;
+
 export function DevicesScreen({ navigation }: Props) {
   const [devices, setDevices] = useState<DeviceId[]>([]);
+  const [currentPage, setCurrentPage] = useState(0);
 
   useEffect(() => {
     const uid = auth.currentUser?.uid;
@@ -48,25 +57,64 @@ export function DevicesScreen({ navigation }: Props) {
     });
   }, []);
 
-  return (
-    <ScrollView contentContainerStyle={styles.root}>
-      {devices.length === 0 && (
+  if (devices.length === 0) {
+    return (
+      <View style={styles.emptyRoot}>
         <Text style={styles.empty}>
-          등록된 디바이스가 없습니다. 아래 버튼으로 PC 페어링 코드를 입력하세요.
+          등록된 디바이스가 없습니다.
         </Text>
-      )}
+        <Pressable style={styles.addBtn} onPress={() => navigation.navigate("Pairing")}>
+          <Text style={styles.addBtnText}>+ PC 연결하기</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
-      {devices.map((id) => (
-        <DeviceCard key={id} deviceId={id} navigation={navigation} />
-      ))}
+  const onScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const page = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    if (page !== currentPage) setCurrentPage(page);
+  };
 
-      <Pressable
-        style={styles.addBtn}
-        onPress={() => navigation.navigate("Pairing")}
-      >
-        <Text style={styles.addBtnText}>+ PC 추가 연결</Text>
-      </Pressable>
-    </ScrollView>
+  return (
+    <View style={{ flex: 1, backgroundColor: "#f9fafb" }}>
+      <FlatList
+        data={devices}
+        keyExtractor={(id) => id}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={onScrollEnd}
+        renderItem={({ item }) => (
+          <ScrollView
+            style={{ width: SCREEN_WIDTH }}
+            contentContainerStyle={styles.pageContainer}
+            showsVerticalScrollIndicator={false}
+          >
+            <DeviceCard deviceId={item} navigation={navigation} />
+          </ScrollView>
+        )}
+      />
+
+      <View style={styles.bottomBar}>
+        <View style={styles.pagerDots}>
+          {devices.map((_, i) => (
+            <View
+              key={i}
+              style={[
+                styles.pagerDot,
+                i === currentPage ? styles.pagerDotActive : styles.pagerDotInactive,
+              ]}
+            />
+          ))}
+        </View>
+        <Pressable
+          style={styles.addPill}
+          onPress={() => navigation.navigate("Pairing")}
+        >
+          <Text style={styles.addPillText}>+ PC 추가</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -94,6 +142,14 @@ function DeviceCard({
   const [issuedPin, setIssuedPin] = useState<string | null>(null);
   const [otpBusy, setOtpBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Per-button feedback: 'idle' | 'sending' | 'sent'. The 'sent' state flashes
+  // briefly so the user sees the command went through even before the device
+  // state propagates back through RTDB.
+  const [lockStage, setLockStage] = useState<"idle" | "sending" | "sent">("idle");
+  const [resetStage, setResetStage] = useState<"idle" | "sending" | "sent">("idle");
+  const [adjustStage, setAdjustStage] = useState<"idle" | "sending" | "sent">("idle");
+  const [revokeStage, setRevokeStage] = useState<"idle" | "sending" | "sent">("idle");
 
   // Tick every second while a session is active so remaining time is live.
   const [now, setNow] = useState<number>(Date.now());
@@ -147,13 +203,28 @@ function DeviceCard({
   const pausedSec = Math.max(0, state?.sessionPausedSeconds ?? 0);
   const hasPausedSession = locked && pausedSec > 0;
 
+  // If the state doesn't change within 8s of sending a lock/unlock command,
+  // surface a soft warning so the user isn't left wondering whether it went
+  // through. Resets when the state finally changes (or the stage clears).
+  const [lockWarn, setLockWarn] = useState(false);
+  useEffect(() => {
+    if (lockStage !== "sending" && lockStage !== "sent") {
+      setLockWarn(false);
+      return;
+    }
+    const h = setTimeout(() => setLockWarn(true), 8000);
+    return () => clearTimeout(h);
+  }, [lockStage, state?.locked]);
+
   const sendLock = async (type: "lock" | "unlock") => {
-    // Lock now pauses the session (remaining time preserved) — no scary
-    // confirmation needed. Unlock resumes it automatically.
+    setLockStage("sending");
     try {
       const uid = auth.currentUser?.uid ?? "anonymous";
       await issueCommand(deviceId, type, {}, uid);
+      setLockStage("sent");
+      setTimeout(() => setLockStage("idle"), 1500);
     } catch (e) {
+      setLockStage("idle");
       Alert.alert("전송 실패", String(e));
     }
   };
@@ -168,10 +239,14 @@ function DeviceCard({
           text: "리셋",
           style: "destructive",
           onPress: async () => {
+            setResetStage("sending");
             try {
               const uid = auth.currentUser?.uid ?? "anonymous";
               await issueCommand(deviceId, "resetTodayUsage", {}, uid);
+              setResetStage("sent");
+              setTimeout(() => setResetStage("idle"), 1500);
             } catch (e) {
+              setResetStage("idle");
               Alert.alert("전송 실패", String(e));
             }
           },
@@ -208,12 +283,16 @@ function DeviceCard({
         text: "취소 실행",
         style: "destructive",
         onPress: async () => {
+          setRevokeStage("sending");
           try {
             const uid = auth.currentUser?.uid ?? "anonymous";
             await issueCommand(deviceId, "revokeOneTimePin", {}, uid);
             setIssuedPin(null);
             setCopied(false);
+            setRevokeStage("sent");
+            setTimeout(() => setRevokeStage("idle"), 1500);
           } catch (e) {
+            setRevokeStage("idle");
             Alert.alert("전송 실패", String(e));
           }
         },
@@ -221,12 +300,74 @@ function DeviceCard({
     ]);
   };
 
+  const [removing, setRemoving] = useState(false);
+
+  const openMenu = () => {
+    Alert.alert("디바이스 관리", displayName, [
+      { text: "다시 페어링", style: "destructive", onPress: repair },
+      { text: "완전 제거", style: "destructive", onPress: uninstall },
+      { text: "닫기", style: "cancel" },
+    ]);
+  };
+
+  const repair = () => {
+    Alert.alert(
+      "다시 페어링",
+      "이 PC의 PIN, 스케줄, 사용시간 등 모든 설정을 초기화하고 새 페어링 코드를 발급합니다. PC 잠금은 유지됩니다.",
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "다시 페어링",
+          style: "destructive",
+          onPress: async () => {
+            setRemoving(true);
+            try {
+              const uid = auth.currentUser?.uid ?? "anonymous";
+              await unregisterDevice(deviceId, uid);
+            } catch (e) {
+              Alert.alert("전송 실패", String(e));
+              setRemoving(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const uninstall = () => {
+    Alert.alert(
+      "완전 제거 (오버레이도 없앰)",
+      "TickTock 에이전트를 PC에서 완전히 제거합니다. 서비스가 중지되고 오버레이가 사라지며, PC는 TickTock이 설치되기 전 상태로 돌아갑니다. 이 작업은 되돌릴 수 없습니다 — 다시 설치하려면 setup.exe 재실행이 필요합니다.",
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "완전 제거",
+          style: "destructive",
+          onPress: async () => {
+            setRemoving(true);
+            try {
+              const uid = auth.currentUser?.uid ?? "anonymous";
+              await uninstallDeviceAgent(deviceId, uid);
+            } catch (e) {
+              Alert.alert("전송 실패", String(e));
+              setRemoving(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const adjustPin = async (newMinutes: number) => {
+    setAdjustStage("sending");
     try {
       const uid = auth.currentUser?.uid ?? "anonymous";
       await issueCommand(deviceId, "adjustOneTimePin", { minutes: newMinutes }, uid);
       setSelectedMinutes(newMinutes);
+      setAdjustStage("sent");
+      setTimeout(() => setAdjustStage("idle"), 1500);
     } catch (e) {
+      setAdjustStage("idle");
       Alert.alert("전송 실패", String(e));
     }
   };
@@ -259,10 +400,18 @@ function DeviceCard({
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Text style={styles.deviceName}>{displayName}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.deviceName}>{displayName}</Text>
+          {state?.agentVersion && (
+            <Text style={styles.versionLabel}>PC 앱 v{state.agentVersion}</Text>
+          )}
+        </View>
         <Text style={[styles.dot, { color: online ? "#10b981" : "#9ca3af" }]}>
           {online ? "● 온라인" : "○ 오프라인"}
         </Text>
+        <Pressable onPress={openMenu} style={styles.menuBtn} hitSlop={8}>
+          <Text style={styles.menuBtnText}>⋮</Text>
+        </Pressable>
       </View>
 
       <View style={[styles.statusPill, { backgroundColor: statusBg }]}>
@@ -277,8 +426,14 @@ function DeviceCard({
               {formatMinutes(todayUsed)}
               {dailyLimit > 0 ? ` / ${formatMinutes(dailyLimit)}` : "  (한도 없음)"}
             </Text>
-            <Pressable onPress={resetUsage} disabled={!online} style={[styles.resetBtn, !online && { opacity: 0.4 }]}>
-              <Text style={styles.resetBtnText}>리셋</Text>
+            <Pressable
+              onPress={resetUsage}
+              disabled={!online || resetStage !== "idle"}
+              style={[styles.resetBtn, (!online || resetStage !== "idle") && { opacity: 0.5 }]}
+            >
+              <Text style={styles.resetBtnText}>
+                {resetStage === "sending" ? "전송 중…" : resetStage === "sent" ? "✓" : "리셋"}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -299,49 +454,48 @@ function DeviceCard({
             <Text style={styles.remainingLabel}>남은 한도 {formatMinutes(dailyRemaining)}</Text>
           </>
         )}
-        {sessionRemainingSec > 0 && (
-          <View style={[styles.metricRow, { marginTop: 8 }]}>
-            <Text style={styles.metricLabel}>1회성 PIN 남은 시간</Text>
-            <Text style={[styles.metricValue, { color: "#b45309" }]}>
-              {formatDuration(sessionRemainingSec)}
-            </Text>
-          </View>
-        )}
-        {hasPausedSession && (
-          <View style={[styles.metricRow, { marginTop: 8 }]}>
-            <Text style={styles.metricLabel}>1회성 PIN (일시정지)</Text>
-            <Text style={[styles.metricValue, { color: "#b45309" }]}>
-              {formatDuration(pausedSec)} 남음
-            </Text>
-          </View>
-        )}
       </View>
 
       <Pressable
         style={[
           styles.bigBtn,
           {
-            backgroundColor: online
-              ? (locked ? (hasPausedSession ? "#f59e0b" : "#10b981") : "#ef4444")
-              : "#9ca3af",
+            backgroundColor: !online
+              ? "#9ca3af"
+              : lockStage === "sending"
+                ? "#374151"
+                : lockStage === "sent"
+                  ? "#059669"
+                  : locked
+                    ? (hasPausedSession ? "#f59e0b" : "#10b981")
+                    : "#ef4444",
           },
         ]}
         onPress={() => sendLock(locked ? "unlock" : "lock")}
-        disabled={!online}
+        disabled={!online || lockStage !== "idle"}
       >
         <Text style={styles.bigBtnText}>
           {!online
             ? "오프라인"
-            : locked
-              ? hasPausedSession
-                ? `다시 열기 (${formatDuration(pausedSec)} 남음)`
-                : "잠금 해제"
-              : "즉시 잠금"}
+            : lockStage === "sending"
+              ? "전송 중…"
+              : lockStage === "sent"
+                ? "✓ 전송됨"
+                : locked
+                  ? hasPausedSession
+                    ? `다시 열기 (${formatDuration(pausedSec)} 남음)`
+                    : "잠금 해제"
+                  : "즉시 잠금"}
         </Text>
       </Pressable>
       {!online && (
         <Text style={styles.offlineHint}>
           PC가 꺼져 있거나 인터넷에 연결되어 있지 않습니다. 온라인 상태가 되면 버튼이 활성화됩니다.
+        </Text>
+      )}
+      {lockWarn && (
+        <Text style={styles.warnHint}>
+          ⚠ 아직 PC 응답이 없습니다. 인터넷이 끊겼거나 에이전트가 재시작 중일 수 있어요. 잠시 후 자동 반영됩니다.
         </Text>
       )}
 
@@ -351,17 +505,24 @@ function DeviceCard({
             <Text style={styles.activeTitle}>
               현재 1회성 PIN {hasPausedSession ? "일시정지" : "사용 중"}
             </Text>
-            <Pressable onPress={revokePin} style={styles.revokeBtn}>
-              <Text style={styles.revokeBtnText}>취소</Text>
+            <Pressable onPress={revokePin} disabled={revokeStage !== "idle"} style={[styles.revokeBtn, revokeStage !== "idle" && { opacity: 0.6 }]}>
+              <Text style={styles.revokeBtnText}>
+                {revokeStage === "sending" ? "전송 중…" : revokeStage === "sent" ? "✓ 전송됨" : "취소"}
+              </Text>
             </Pressable>
           </View>
-          <Text style={styles.activeSub}>시간 변경</Text>
+          <Text style={styles.activeSub}>
+            시간 변경
+            {adjustStage === "sending" && "  · 전송 중…"}
+            {adjustStage === "sent" && "  · ✓ 전송됨"}
+          </Text>
           <View style={styles.chipsRow}>
             {OTP_PRESETS.map((p) => (
               <Pressable
                 key={p.minutes}
                 onPress={() => adjustPin(p.minutes)}
-                style={styles.chip}
+                disabled={adjustStage !== "idle"}
+                style={[styles.chip, adjustStage !== "idle" && { opacity: 0.5 }]}
               >
                 <Text style={styles.chipText}>{p.label}</Text>
               </Pressable>
@@ -462,6 +623,7 @@ function DeviceCard({
           <Text style={styles.linkBtnText}>사용 시간</Text>
         </Pressable>
       </View>
+
     </View>
   );
 }
@@ -493,14 +655,46 @@ function formatTime(ms: number): string {
 }
 
 const styles = StyleSheet.create({
-  root: { padding: 16, paddingBottom: 48 },
-  empty: { padding: 24, textAlign: "center", color: "#666" },
+  pageContainer: { padding: 16, paddingBottom: 80 },
+  emptyRoot: {
+    flex: 1,
+    padding: 32,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#f9fafb",
+  },
+  empty: { fontSize: 15, textAlign: "center", color: "#6b7280", marginBottom: 24 },
+
+  bottomBar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: "rgba(249, 250, 251, 0.95)",
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+  },
+  pagerDots: { flexDirection: "row", gap: 6 },
+  pagerDot: { width: 8, height: 8, borderRadius: 4 },
+  pagerDotActive: { backgroundColor: "#2563eb" },
+  pagerDotInactive: { backgroundColor: "#d1d5db" },
+  addPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    backgroundColor: "#2563eb",
+  },
+  addPillText: { color: "#fff", fontWeight: "700", fontSize: 13 },
 
   card: {
     backgroundColor: "#fff",
     borderRadius: 16,
     padding: 16,
-    marginBottom: 16,
     shadowColor: "#000",
     shadowOpacity: 0.06,
     shadowRadius: 8,
@@ -513,8 +707,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  deviceName: { fontSize: 20, fontWeight: "700", flex: 1 },
-  dot: { fontSize: 12, fontWeight: "600" },
+  deviceName: { fontSize: 20, fontWeight: "700" },
+  versionLabel: { fontSize: 11, color: "#9ca3af", marginTop: 2 },
+  dot: { fontSize: 12, fontWeight: "600", marginLeft: 8 },
 
   statusPill: {
     flexDirection: "row",
@@ -590,6 +785,15 @@ const styles = StyleSheet.create({
   bigBtn: { paddingVertical: 18, borderRadius: 12, alignItems: "center" },
   bigBtnText: { color: "#fff", fontSize: 20, fontWeight: "700" },
   offlineHint: { marginTop: 8, fontSize: 12, color: "#6b7280", textAlign: "center" },
+  warnHint: {
+    marginTop: 8,
+    padding: 8,
+    fontSize: 12,
+    color: "#92400e",
+    backgroundColor: "#fef3c7",
+    borderRadius: 6,
+    textAlign: "center",
+  },
 
   otpBlock: {
     marginTop: 16,
@@ -673,6 +877,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   linkBtnText: { color: "#2563eb", fontWeight: "600" },
+
+  menuBtn: {
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  menuBtnText: { fontSize: 22, color: "#6b7280", fontWeight: "700", lineHeight: 22 },
 
   addBtn: {
     marginTop: 8,

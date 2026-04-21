@@ -96,6 +96,10 @@ struct OpenSession {
     started_at: DateTime<Utc>,
     last_tick: DateTime<Utc>,
     active_seconds: i64,
+    // Seconds of `active_seconds` that have already been written to
+    // daily_summary by the periodic flusher. persist_session only needs to
+    // write the remaining tail, and a restart at most loses one flush interval.
+    flushed_seconds: i64,
 }
 
 impl AppState {
@@ -376,6 +380,7 @@ impl AppState {
                     started_at: now,
                     last_tick: now,
                     active_seconds: 0,
+                    flushed_seconds: 0,
                 });
             }
         }
@@ -397,6 +402,9 @@ impl AppState {
         }
         let tz = self.timezone().await;
         let date_str = open.started_at.with_timezone(&tz).format("%Y-%m-%d").to_string();
+        // Periodic flushes may have already recorded part of this session;
+        // only write the tail to daily_summary to avoid double-counting.
+        let tail_seconds = (open.active_seconds - open.flushed_seconds).max(0);
         let db = self.0.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
@@ -413,14 +421,82 @@ impl AppState {
                     open.active_seconds,
                 ],
             )?;
+            if tail_seconds > 0 {
+                conn.execute(
+                    "INSERT INTO daily_summary (date, process_name, active_seconds) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(date, process_name) DO UPDATE SET active_seconds = active_seconds + excluded.active_seconds",
+                    params![date_str, open.info.process_name, tail_seconds],
+                )?;
+            }
+            Ok(())
+        })
+        .await??;
+        Ok(())
+    }
+
+    /// Periodically write the not-yet-flushed portion of the currently open
+    /// session to daily_summary. Called from the usage poller; a crash/restart
+    /// loses at most `FLUSH_INTERVAL_SECS` worth of active time instead of the
+    /// entire in-progress session.
+    pub async fn flush_open_session_if_due(&self) -> Result<()> {
+        const FLUSH_INTERVAL_SECS: i64 = 60;
+
+        let (process_name, date_str, delta) = {
+            let mut w = self.0.mutable.write().await;
+            // Read timezone before the mutable borrow of open_session below.
+            let tz = w.timezone;
+            let Some(open) = w.open_session.as_mut() else { return Ok(()) };
+            let delta = open.active_seconds - open.flushed_seconds;
+            if delta < FLUSH_INTERVAL_SECS {
+                return Ok(());
+            }
+            let date_str = open.started_at.with_timezone(&tz).format("%Y-%m-%d").to_string();
+            let process_name = open.info.process_name.clone();
+            open.flushed_seconds = open.active_seconds;
+            (process_name, date_str, delta)
+        };
+
+        let db = self.0.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = db.db.lock().unwrap();
             conn.execute(
                 "INSERT INTO daily_summary (date, process_name, active_seconds) VALUES (?1, ?2, ?3)
                  ON CONFLICT(date, process_name) DO UPDATE SET active_seconds = active_seconds + excluded.active_seconds",
-                params![date_str, open.info.process_name, open.active_seconds],
+                params![date_str, process_name, delta],
             )?;
             Ok(())
         })
         .await??;
+        Ok(())
+    }
+
+    /// Nuke everything local: kv, daily_summary, sessions, pin_attempts, and
+    /// in-memory counters / schedule / session state. Used for "unregister
+    /// this PC" from the parent app — next boot is indistinguishable from a
+    /// fresh install, so the agent goes back into pairing mode.
+    pub async fn wipe_all(&self) -> Result<()> {
+        let db = self.0.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = db.db.lock().unwrap();
+            conn.execute("DELETE FROM sessions", [])?;
+            conn.execute("DELETE FROM daily_summary", [])?;
+            conn.execute("DELETE FROM kv", [])?;
+            conn.execute("DELETE FROM pin_attempts", [])?;
+            Ok(())
+        })
+        .await??;
+
+        let mut w = self.0.mutable.write().await;
+        w.session_expires_at = None;
+        w.session_paused_seconds = None;
+        w.today_used_seconds = 0;
+        w.open_session = None;
+        w.dirty_usage.clear();
+        w.schedule = default_schedule();
+        w.locked = true;
+        w.lock_reason = LockReason::Boot;
+        drop(w);
+        self.0.state_changed.notify_one();
         Ok(())
     }
 
@@ -565,6 +641,18 @@ impl AppState {
 }
 
 fn resolve_db_path(app: &AppHandle) -> Result<PathBuf> {
+    // In debug builds (i.e. `npm run tauri:dev`) keep data in a separate
+    // folder so local development doesn't reuse / overwrite the installed
+    // agent's DB on the same user profile. Prod installs continue to use
+    // the per-user app-local-data directory.
+    if cfg!(debug_assertions) {
+        let home = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .context("no home directory (USERPROFILE/HOME)")?;
+        return Ok(PathBuf::from(home)
+            .join(".ticktock-dev")
+            .join("ticktock.sqlite"));
+    }
     let dir = app.path().app_local_data_dir().context("no app local data dir")?;
     Ok(dir.join("ticktock.sqlite"))
 }

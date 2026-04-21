@@ -49,13 +49,20 @@ pub async fn run_poller(_app: AppHandle, state: AppState) {
 }
 
 async fn tick(state: &AppState, self_pid: u32) -> Result<()> {
-    match idle_seconds() {
-        Ok(idle) if idle >= IDLE_THRESHOLD_SECS => {
-            state.close_open_session().await?;
-            return Ok(());
+    // If a one-time-PIN session is active, the parent explicitly granted this
+    // time — count every second as used, idle or not. Idle gating only applies
+    // to "normal" non-session usage.
+    let session_active = state.session_expires_at().await.is_some();
+
+    if !session_active {
+        match idle_seconds() {
+            Ok(idle) if idle >= IDLE_THRESHOLD_SECS => {
+                state.close_open_session().await?;
+                return Ok(());
+            }
+            Err(e) => log::debug!("idle read failed: {e}"),
+            _ => {}
         }
-        Err(e) => log::debug!("idle read failed: {e}"),
-        _ => {}
     }
 
     let Some(info) = foreground_process()? else { return Ok(()) };
@@ -63,6 +70,11 @@ async fn tick(state: &AppState, self_pid: u32) -> Result<()> {
         return Ok(());
     }
     state.extend_or_open_session(info).await?;
+    // Best-effort 1-minute persistence so an unexpected restart doesn't lose
+    // the current session's accumulated minutes.
+    if let Err(e) = state.flush_open_session_if_due().await {
+        log::debug!("flush_open_session_if_due: {e:#}");
+    }
     Ok(())
 }
 
