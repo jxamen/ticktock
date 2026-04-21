@@ -1,0 +1,57 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+.pnpm-debug.log*
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Rust / Tauri
+target/
+agent/src-tauri/target/
+agent/src-tauri/gen/
+agent/src-tauri/WixTools/
+Cargo.lock
+
+# Expo
+.expo/
+.expo-shared/
+web-build/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+**/firebase-service-account*.json
+**/google-services.json
+**/GoogleService-Info.plist
+# Tauri auto-update signing keys (never commit the private key).
+*.key
+*.key.pub
+
+# Firebase local logs
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
+
+# Claude Code local config
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local data
+*.sqlite
+*.sqlite-journal
+*.db

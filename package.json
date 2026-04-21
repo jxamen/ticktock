@@ -1,0 +1,16 @@
+{
+  "name": "ticktock",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Remote PC usage control for kids.",
+  "workspaces": [
+    "shared",
+    "agent",
+    "mobile"
+  ],
+  "scripts": {
+    "build:shared": "npm -w @ticktock/shared run build",
+    "dev:agent": "npm -w @ticktock/agent run tauri:dev",
+    "dev:mobile": "npm -w @ticktock/mobile run start"
+  }
+}

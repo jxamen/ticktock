@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "TickTock",
+    "slug": "ticktock",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ticktock.mobile"
+    },
+    "android": {
+      "package": "com.ticktock.mobile"
+    },
+    "plugins": [],
+    "extra": {
+      "firebase": {
+        "apiKey": "AIzaSyB-VLXcCpPoyRKyU7h2U-ZvnJb9q8fZWho",
+        "authDomain": "ticktock-bc713.firebaseapp.com",
+        "databaseURL": "https://ticktock-bc713-default-rtdb.asia-southeast1.firebasedatabase.app",
+        "projectId": "ticktock-bc713",
+        "storageBucket": "ticktock-bc713.firebasestorage.app",
+        "messagingSenderId": "259627582783",
+        "appId": "1:259627582783:web:1fe3db1baf37f5eb777f8a",
+        "measurementId": "G-4MR2RVCR2J"
+      },
+      "functionsBaseUrl": "https://asia-northeast3-ticktock-bc713.cloudfunctions.net"
+    }
+  }
+}
