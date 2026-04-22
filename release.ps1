@@ -154,11 +154,15 @@ Log "✓ wrote latest.json" "Green"
 # ---------- 5) github release ----------
 
 Log "Checking for existing release v$Version..." "Cyan"
-& $gh release view "v$Version" --repo $ghRepo 2>&1 | Out-Null
+# PowerShell 5.1 quirk: `2>&1` on a native exe wraps stderr lines in
+# NativeCommandError records that trip $ErrorActionPreference=Stop even
+# when the exe exited cleanly. `2>$null` just discards stderr — we only
+# care about $LASTEXITCODE here.
+& $gh release view "v$Version" --repo $ghRepo 2>$null | Out-Null
 if ($LASTEXITCODE -eq 0) {
     Log "Release v$Version already exists — deleting it so we can re-create" "Yellow"
     # --yes skips the "are you sure" prompt; --cleanup-tag removes the git tag too.
-    & $gh release delete "v$Version" --repo $ghRepo --yes --cleanup-tag 2>&1 | Out-Null
+    & $gh release delete "v$Version" --repo $ghRepo --yes --cleanup-tag 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "failed to delete existing release v$Version"
     }
