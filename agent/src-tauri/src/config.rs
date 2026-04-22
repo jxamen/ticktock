@@ -149,21 +149,25 @@ pub fn set_subscription_seats(seats: Option<u32>) -> Result<()> {
     save(&cfg)
 }
 
-pub fn is_allowed(username: &str) -> bool {
-    let cfg = match load() {
-        Ok(c) => c,
+pub fn is_in_allowed(username: &str) -> bool {
+    match load() {
+        Ok(c) => c
+            .allowed_users
+            .iter()
+            .any(|u| u.eq_ignore_ascii_case(username)),
         Err(e) => {
-            log::warn!("config load failed, treating all sessions as allowed: {e:#}");
-            return true;
+            log::warn!("config load failed, treating as not allowed: {e:#}");
+            false
         }
-    };
-    // Empty list → fresh install, allow so first-run PIN setup can appear.
-    if cfg.allowed_users.is_empty() {
-        return true;
     }
-    cfg.allowed_users
-        .iter()
-        .any(|u| u.eq_ignore_ascii_case(username))
+}
+
+// Back-compat shim — pre-v0.1.12 used this name with the buggy
+// "empty list → allow all" semantic. Callers were all inside the
+// crate, updated to use is_in_allowed directly; kept as an alias in
+// case any external reference still points here.
+pub fn is_allowed(username: &str) -> bool {
+    is_in_allowed(username)
 }
 
 /// Create %ProgramData%\TickTock\ and grant the local Users group Modify

@@ -82,9 +82,27 @@ pub fn spawn_in_active_session() -> Result<ChildProcess> {
         // account is recorded and the gate starts enforcing.
         let username = username_for_token(user_token)
             .context("resolve username for session token")?;
-        if !crate::config::is_allowed(&username) {
+
+        // Gate: spawn only for
+        //   (a) users in config.allowed_users (the parent's registered
+        //       children — they need the overlay), or
+        //   (b) local administrator accounts (the parent themselves — they
+        //       need AdminSetup).
+        // v0.1.11 and earlier had an "empty list → allow everyone"
+        // escape hatch that meant toggling the last child off silently
+        // re-enabled the overlay for every session on the PC; that's
+        // what the user saw when joshu's overlay kept appearing after
+        // being toggled off.
+        let in_allowed = crate::config::is_in_allowed(&username);
+        let is_admin = crate::users::local_admin_names()
+            .map(|s| s.iter().any(|a| a.eq_ignore_ascii_case(&username)))
+            .unwrap_or_else(|e| {
+                log::warn!("admin group lookup failed, treating session as non-admin: {e:#}");
+                false
+            });
+        if !in_allowed && !is_admin {
             bail!(
-                "session owned by '{}' — not in allowed_users; skipping spawn",
+                "session owned by '{}' — not in allowed_users and not an admin; skipping spawn",
                 username
             );
         }

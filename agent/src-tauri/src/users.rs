@@ -153,7 +153,7 @@ pub fn enumerate() -> Result<Vec<LocalUser>> {
 // well-known SID S-1-5-32-544 indirectly via the localised group name:
 // on a non-English Windows "Administrators" is translated, so we look up
 // the name from the SID first.
-fn local_admin_names() -> Result<HashSet<String>> {
+pub fn local_admin_names() -> Result<HashSet<String>> {
     unsafe {
         let group_name = admin_group_name()?;
         let group_wide: Vec<u16> = group_name
