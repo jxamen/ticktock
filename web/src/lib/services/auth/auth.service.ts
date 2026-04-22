@@ -1,4 +1,4 @@
-import { and, eq, gt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { users, passwordCredentials, auditLogs } from "@/lib/db/schema";
 import { hashPassword, verifyPassword } from "@/lib/utils/password";
