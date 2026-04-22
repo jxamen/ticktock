@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/schema";
 import { generateUlid } from "@/lib/utils/ulid";
 import type { CreateManagedUserInput } from "@/lib/validators/subscription.validator";
+import { assertSeatAvailable } from "@/lib/services/plan/plan.service";
 
 export class ManagedUserError extends Error {
     constructor(public code: string, message: string, public status = 400) {
@@ -77,6 +78,11 @@ export async function createManagedUser(
             ),
         )
         .get();
+
+    // seat 한도 검증 (재활성화도 seat 소비이므로 동일 체크)
+    if (!existing || !existing.isActive) {
+        await assertSeatAvailable(actorUserId, deps);
+    }
 
     const now = new Date().toISOString();
 
