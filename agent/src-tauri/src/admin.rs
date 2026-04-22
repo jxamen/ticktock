@@ -225,6 +225,22 @@ fn diagnose_render(
             Err(e) => body.push_str(&format!("  {sample}: 에러 {e:#}\n")),
         }
     }
+    body.push_str("\n로컬 Windows 계정 (picker 프리뷰):\n");
+    match crate::users::enumerate() {
+        Ok(users) => {
+            if users.is_empty() {
+                body.push_str("  (없음)\n");
+            } else {
+                for u in &users {
+                    let tag = if u.is_admin { "[관리자]" } else { "[표준]" };
+                    let cur = if u.is_current { " (본인)" } else { "" };
+                    let disp = if u.display_name.is_empty() { "—" } else { &u.display_name };
+                    body.push_str(&format!("  {tag} {} / SAM: {}{cur}\n", disp, u.username));
+                }
+            }
+        }
+        Err(e) => body.push_str(&format!("  enumerate 실패: {e:#}\n")),
+    }
     body.push('\n');
 
     body.push_str(&match &thread {

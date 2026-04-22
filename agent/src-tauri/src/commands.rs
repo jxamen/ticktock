@@ -169,16 +169,128 @@ pub async fn is_admin_session() -> Result<bool, String> {
     }
 }
 
-// List currently permitted child Windows accounts. Shown in the admin UI.
+// List currently permitted child Windows accounts. Kept for back-compat
+// with any stale UI code; AdminSetup now uses list_local_users instead so
+// it can render display names + admin badges.
 #[tauri::command]
 pub async fn list_allowed_users() -> Result<Vec<String>, String> {
     let cfg = crate::config::load().map_err(s)?;
     Ok(cfg.allowed_users)
 }
 
-// Add a Windows account name to allowed_users. The spawner will start
-// launching the overlay agent when that account logs in. Trimmed; empty
-// input is rejected so the UI can't accidentally "permit everyone".
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalUserDto {
+    pub username: String,
+    pub display_name: String,
+    pub is_admin: bool,
+    pub is_current: bool,
+    /// True if `username` is already in config.allowed_users (rendered as
+    /// toggle-on in the admin picker).
+    pub allowed: bool,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AllowedUsersPayload {
+    pub users: Vec<LocalUserDto>,
+    /// Number of allowed_users the subscription permits. `None` = not yet
+    /// configured from the web side; UI should hide the cap indicator.
+    pub seat_limit: Option<u32>,
+    pub seat_used: u32,
+}
+
+// Enumerate every enabled local Windows account along with its display
+// name + admin status + whether it's already registered as a child. Used
+// by AdminSetup to render the picker — replaces the typed-username flow
+// from v0.1.9 that forced parents to run `whoami` on each child's login.
+#[tauri::command]
+pub async fn list_local_users() -> Result<AllowedUsersPayload, String> {
+    #[cfg(windows)]
+    {
+        let cfg = crate::config::load().map_err(s)?;
+        let allowed_lc: std::collections::HashSet<String> = cfg
+            .allowed_users
+            .iter()
+            .map(|u| u.to_lowercase())
+            .collect();
+        let enumerated = crate::users::enumerate().map_err(s)?;
+        let users = enumerated
+            .into_iter()
+            .map(|u| LocalUserDto {
+                allowed: allowed_lc.contains(&u.username.to_lowercase()),
+                username: u.username,
+                display_name: u.display_name,
+                is_admin: u.is_admin,
+                is_current: u.is_current,
+            })
+            .collect::<Vec<_>>();
+        Ok(AllowedUsersPayload {
+            seat_used: cfg.allowed_users.len() as u32,
+            users,
+            seat_limit: cfg.subscription_seats,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(AllowedUsersPayload { users: vec![], seat_limit: None, seat_used: 0 })
+    }
+}
+
+// Single entry point for the AdminSetup toggle. `allow=true` adds the user
+// to config.allowed_users (gating: can't be an admin, can't exceed the seat
+// limit); `allow=false` removes. The "can't be admin" check goes through the
+// enumerator instead of trusting the caller — the UI disables admin toggles
+// but defense-in-depth prevents a malformed invoke from slipping past.
+#[tauri::command]
+pub async fn set_allowed_user(username: String, allow: bool) -> Result<(), String> {
+    let name = username.trim();
+    if name.is_empty() {
+        return Err("사용자명이 비어 있습니다".into());
+    }
+
+    if !allow {
+        crate::config::remove_allowed_user(name).map_err(s)?;
+        return Ok(());
+    }
+
+    // Allow path: must not be an admin account, must fit in seat budget.
+    #[cfg(windows)]
+    {
+        let local = crate::users::enumerate().map_err(s)?;
+        let matched = local
+            .iter()
+            .find(|u| u.username.eq_ignore_ascii_case(name));
+        if let Some(u) = matched {
+            if u.is_admin {
+                return Err("관리자 계정은 자녀로 등록할 수 없습니다".into());
+            }
+        }
+        // matched=None → user not found in enumeration; still allow the add
+        // since offline / not-yet-logged-in accounts may legitimately be
+        // missing. The spawner check catches the real gate at runtime.
+    }
+
+    let cfg = crate::config::load().map_err(s)?;
+    let already = cfg
+        .allowed_users
+        .iter()
+        .any(|u| u.eq_ignore_ascii_case(name));
+    if !already {
+        if let Some(limit) = cfg.subscription_seats {
+            if cfg.allowed_users.len() as u32 >= limit {
+                return Err(format!(
+                    "구독 seat 한도 ({limit}) 초과. 웹에서 seat 을 늘려주세요."
+                ));
+            }
+        }
+    }
+    crate::config::add_allowed_user(name).map_err(s)?;
+    Ok(())
+}
+
+// Left for back-compat; AdminSetup now uses set_allowed_user. Unchanged
+// behaviour: ignores seat limit, allows admin accounts — callers beware.
 #[tauri::command]
 pub async fn add_allowed_user(username: String) -> Result<(), String> {
     let name = username.trim();
@@ -191,19 +303,11 @@ pub async fn add_allowed_user(username: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn remove_allowed_user(username: String) -> Result<(), String> {
-    let name = username.trim().to_string();
+    let name = username.trim();
     if name.is_empty() {
         return Err("사용자명이 비어 있습니다".into());
     }
-    let mut cfg = crate::config::load().map_err(s)?;
-    let before = cfg.allowed_users.len();
-    cfg.allowed_users
-        .retain(|u| !u.eq_ignore_ascii_case(&name));
-    if cfg.allowed_users.len() == before {
-        return Err(format!("'{}' 은(는) 목록에 없습니다", name));
-    }
-    crate::config::save(&cfg).map_err(s)?;
-    Ok(())
+    crate::config::remove_allowed_user(name).map_err(s)
 }
 
 #[tauri::command]
@@ -434,6 +538,34 @@ pub async fn handle_remote_command(
             let date_str = today.format("%Y-%m-%d").to_string();
             // Clear the RTDB snapshot so the parent app sees 0 immediately.
             crate::firebase::clear_usage_day(state, &date_str).await.ok();
+        }
+        "setPin" => {
+            // Web console parent pushes a new main PIN. Replaces the existing
+            // one outright — same semantics as the local `set_pin` Tauri
+            // command, just triggered from the server side. PIN comes in
+            // plaintext so the agent controls hashing (single canonical
+            // argon2 format). Clears the one-time-PIN slot so there's no
+            // stale temp credential after a main-PIN rotation.
+            let pin_str = payload
+                .get("pin")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("setPin: missing 'pin'"))?;
+            if pin_str.len() < 4 || pin_str.len() > 6 || !pin_str.chars().all(|c| c.is_ascii_digit()) {
+                anyhow::bail!("setPin: 4-6 digit numeric PIN required");
+            }
+            let hash = pin::hash(pin_str)?;
+            state.kv_set("pin_hash", &hash).await?;
+            state.clear_temp_pin().await.ok();
+        }
+        "setSeatLimit" => {
+            // Subscription seat count pushed from the web console. `None`
+            // (null in JSON) clears the limit. AdminSetup reads this through
+            // config.load() on every refresh, so no restart needed.
+            let seats = payload.get("seats").and_then(Value::as_u64).map(|n| n as u32);
+            #[cfg(windows)]
+            crate::config::set_subscription_seats(seats)?;
+            #[cfg(not(windows))]
+            let _ = seats;
         }
         "issueOneTimePin" => {
             // Parent app pre-generates the plaintext PIN (it needs to show it to

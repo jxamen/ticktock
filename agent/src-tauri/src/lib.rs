@@ -20,6 +20,8 @@ pub mod service_updater;
 pub mod storage;
 pub mod updater;
 pub mod usage;
+#[cfg(windows)]
+pub mod users;
 
 use tauri::Manager;
 
@@ -45,6 +47,8 @@ pub fn run_app() {
             commands::get_lock_status,
             commands::is_admin_session,
             commands::list_allowed_users,
+            commands::list_local_users,
+            commands::set_allowed_user,
             commands::add_allowed_user,
             commands::remove_allowed_user,
         ])

@@ -41,6 +41,15 @@ pub struct AgentConfig {
     pub allowed_users: Vec<String>,
     #[serde(default)]
     pub admin_user: Option<String>,
+    /// Maximum number of child Windows accounts this parent's subscription
+    /// permits (one seat = one child device). `None` = not yet configured
+    /// (web/ Phase 2 will populate this via RTDB push once the parent's plan
+    /// is known). When `Some(N)`, AdminSetup refuses to add an (N+1)th child
+    /// to allowed_users. Hard enforcement remains server-side at pairing
+    /// claim — this is the local UX pre-check so the parent doesn't add a
+    /// child that would fail to pair anyway.
+    #[serde(default)]
+    pub subscription_seats: Option<u32>,
 }
 
 pub fn programdata_dir() -> Result<PathBuf> {
@@ -121,6 +130,23 @@ pub fn add_allowed_user(username: &str) -> Result<()> {
         save(&cfg)?;
     }
     Ok(())
+}
+
+pub fn remove_allowed_user(username: &str) -> Result<()> {
+    let mut cfg = load()?;
+    let before = cfg.allowed_users.len();
+    cfg.allowed_users
+        .retain(|u| !u.eq_ignore_ascii_case(username));
+    if cfg.allowed_users.len() == before {
+        return Ok(()); // not present — noop
+    }
+    save(&cfg)
+}
+
+pub fn set_subscription_seats(seats: Option<u32>) -> Result<()> {
+    let mut cfg = load()?;
+    cfg.subscription_seats = seats;
+    save(&cfg)
 }
 
 pub fn is_allowed(username: &str) -> bool {

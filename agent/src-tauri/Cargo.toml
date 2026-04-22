@@ -48,6 +48,7 @@ rand = "0.8"
 windows-service = "0.7"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_NetworkManagement_NetManagement",
     "Win32_Security",
     "Win32_System_Environment",
     "Win32_System_RemoteDesktop",
