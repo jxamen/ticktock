@@ -92,7 +92,24 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     // fail-closed design: a parent who accidentally installs onto their own
     // account must not get trapped.
     #[cfg(windows)]
-    let is_admin = !cfg!(debug_assertions) && admin::is_current_process_admin().unwrap_or(false);
+    let is_admin = if cfg!(debug_assertions) {
+        false
+    } else {
+        match admin::is_current_process_admin() {
+            Ok(v) => {
+                log::info!("admin check → {v}");
+                v
+            }
+            Err(e) => {
+                // Never collapse errors into "not admin" silently — that was
+                // the v0.1.7/v0.1.8 silent-false bug where CheckTokenMembership
+                // rejected primary tokens and the overlay appeared on the
+                // parent's own account.
+                log::warn!("admin check failed (treating as non-admin): {e:#}");
+                false
+            }
+        }
+    };
     #[cfg(not(windows))]
     let is_admin = false;
 

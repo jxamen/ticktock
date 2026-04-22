@@ -26,6 +26,13 @@ fn main() {
             ticktock_agent::service::run().expect("service exited with error");
             return;
         }
+        // Local self-check: run the same admin-detection the bootstrap uses and
+        // report the result via MessageBox + %TEMP% log. Lets us validate the
+        // fix on a parent account before shipping an installer.
+        Some("--check-admin") => {
+            ticktock_agent::admin::diagnose();
+            return;
+        }
         // --user-session is the same as dev mode but with an explicit marker so
         // the service supervisor and us can identify child processes in logs.
         Some("--user-session") => {
