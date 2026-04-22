@@ -3,6 +3,8 @@
 
 #[cfg(windows)]
 pub mod admin;
+#[cfg(windows)]
+pub mod child_ctl;
 pub mod commands;
 pub mod config;
 #[cfg(windows)]
@@ -51,6 +53,15 @@ pub fn run_app() {
             commands::set_allowed_user,
             commands::add_allowed_user,
             commands::remove_allowed_user,
+            commands::child_list_status,
+            commands::child_issue_temp_pin,
+            commands::child_revoke_temp_pin,
+            commands::child_adjust_temp_pin,
+            commands::child_grant_bonus,
+            commands::child_reset_today_usage,
+            commands::child_set_schedule,
+            commands::child_clear_main_pin,
+            commands::child_usage_history,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

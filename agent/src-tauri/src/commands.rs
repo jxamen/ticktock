@@ -289,6 +289,208 @@ pub async fn set_allowed_user(username: String, allow: bool) -> Result<(), Strin
     Ok(())
 }
 
+// ----- AdminSetup per-child control (v0.1.13) -----
+// The admin session has no AppState of its own (admin is unrestricted) and
+// each child's PIN / pairing / schedule / usage lives in a per-user DB at
+// %ProgramData%\TickTock\users\{username}\ticktock.sqlite. These commands
+// let AdminSetup peek into and mutate those DBs directly, so the parent can
+// manage every child from their own Windows session without touching the
+// mobile / web consoles.
+
+#[tauri::command]
+pub async fn child_list_status() -> Result<Vec<ChildStatusDto>, String> {
+    #[cfg(windows)]
+    {
+        let cfg = crate::config::load().map_err(s)?;
+        // Reuse the enumerator to get display names — fall back to empty string
+        // if a registered child no longer exists locally.
+        let enumerated = crate::users::enumerate().unwrap_or_default();
+        let mut out = Vec::new();
+        for username in &cfg.allowed_users {
+            let display = enumerated
+                .iter()
+                .find(|u| u.username.eq_ignore_ascii_case(username))
+                .map(|u| u.display_name.clone())
+                .unwrap_or_default();
+            let st = crate::child_ctl::status_for(username, &display).map_err(s)?;
+            out.push(ChildStatusDto::from(st));
+        }
+        Ok(out)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(vec![])
+    }
+}
+
+#[cfg(windows)]
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ChildStatusDto {
+    pub username: String,
+    pub display_name: String,
+    pub has_db: bool,
+    pub paired: bool,
+    pub has_pin: bool,
+    pub today_used_minutes: u32,
+    pub daily_limit_minutes: u32,
+    pub schedule_json: Option<String>,
+    pub has_temp_pin: bool,
+    pub temp_pin_minutes: Option<u32>,
+    pub session_expires_at_ms: Option<i64>,
+    pub session_paused_seconds: Option<i64>,
+}
+
+#[cfg(windows)]
+impl From<crate::child_ctl::ChildStatus> for ChildStatusDto {
+    fn from(c: crate::child_ctl::ChildStatus) -> Self {
+        Self {
+            username: c.username,
+            display_name: c.display_name,
+            has_db: c.has_db,
+            paired: c.paired,
+            has_pin: c.has_pin,
+            today_used_minutes: c.today_used_minutes,
+            daily_limit_minutes: c.daily_limit_minutes,
+            schedule_json: c.schedule_json,
+            has_temp_pin: c.has_temp_pin,
+            temp_pin_minutes: c.temp_pin_minutes,
+            session_expires_at_ms: c.session_expires_at_ms,
+            session_paused_seconds: c.session_paused_seconds,
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn child_issue_temp_pin(
+    username: String,
+    pin: Option<String>,
+    minutes: u32,
+) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        let pin_str = match pin {
+            Some(p) => p,
+            None => generate_pin(4),
+        };
+        crate::child_ctl::issue_temp_pin(&username, &pin_str, minutes).map_err(s)?;
+        Ok(pin_str)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (username, pin, minutes);
+        Err("windows only".into())
+    }
+}
+
+#[tauri::command]
+pub async fn child_revoke_temp_pin(username: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        crate::child_ctl::revoke_temp_pin(&username).map_err(s)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = username;
+        Err("windows only".into())
+    }
+}
+
+#[tauri::command]
+pub async fn child_adjust_temp_pin(username: String, minutes: u32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        crate::child_ctl::adjust_temp_pin_minutes(&username, minutes).map_err(s)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (username, minutes);
+        Err("windows only".into())
+    }
+}
+
+#[tauri::command]
+pub async fn child_grant_bonus(username: String, minutes: u32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        crate::child_ctl::grant_bonus_minutes(&username, minutes).map_err(s)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (username, minutes);
+        Err("windows only".into())
+    }
+}
+
+#[tauri::command]
+pub async fn child_reset_today_usage(username: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        crate::child_ctl::reset_today_usage(&username).map_err(s)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = username;
+        Err("windows only".into())
+    }
+}
+
+#[tauri::command]
+pub async fn child_set_schedule(username: String, schedule_json: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        crate::child_ctl::set_schedule(&username, &schedule_json).map_err(s)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (username, schedule_json);
+        Err("windows only".into())
+    }
+}
+
+#[tauri::command]
+pub async fn child_clear_main_pin(username: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        crate::child_ctl::clear_main_pin(&username).map_err(s)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = username;
+        Err("windows only".into())
+    }
+}
+
+#[tauri::command]
+pub async fn child_usage_history(
+    username: String,
+    days: u32,
+) -> Result<Vec<UsageDayDto>, String> {
+    #[cfg(windows)]
+    {
+        let rows = crate::child_ctl::usage_history(&username, days).map_err(s)?;
+        Ok(rows
+            .into_iter()
+            .map(|d| UsageDayDto {
+                date: d.date,
+                minutes: d.minutes,
+            })
+            .collect())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (username, days);
+        Err("windows only".into())
+    }
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDayDto {
+    pub date: String,
+    pub minutes: u32,
+}
+
 // Left for back-compat; AdminSetup now uses set_allowed_user. Unchanged
 // behaviour: ignores seat limit, allows admin accounts — callers beware.
 #[tauri::command]
