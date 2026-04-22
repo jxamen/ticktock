@@ -6,11 +6,11 @@ import { verifyJwt } from "@/lib/utils/jwt";
 import { AUTH_COOKIE } from "@/lib/middleware/auth";
 import { clearAuthCookie } from "../_cookie";
 
-export async function POST(req: NextRequest) {
+async function handle(req: NextRequest) {
     const { db, env } = await getEnv();
     const auth = await requireAuth(req, env);
 
-    // 인증 실패여도 쿠키는 지워주고 /login 으로 보냄
+    // 인증 실패 (stale session 포함) — 쿠키 clear 후 /login 으로
     if (auth instanceof Response) {
         return redirectToLogin();
     }
@@ -29,6 +29,10 @@ export async function POST(req: NextRequest) {
 
     return redirectToLogin();
 }
+
+// GET/POST 둘 다 지원 — stale session 복구는 GET 링크로 리다이렉트해야 동작
+export const GET = handle;
+export const POST = handle;
 
 function redirectToLogin() {
     const response = new Response(null, { status: 303, headers: { Location: "/login" } });

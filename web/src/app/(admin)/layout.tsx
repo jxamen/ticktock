@@ -15,16 +15,23 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
     const { db, env } = await getEnv();
     const payload = await verifyJwt(token, env.JWT_SECRET);
-    if (!payload) redirect("/login");
+    if (!payload) redirect("/api/auth/logout");
 
     const revoked = await env.CACHE.get(`session:blacklist:${payload.jti}`);
-    if (revoked) redirect("/login");
+    if (revoked) redirect("/api/auth/logout");
 
-    const me = await getMe(payload.sub, {
-        db,
-        kv: env.CACHE,
-        jwtSecret: env.JWT_SECRET,
-    });
+    // 계정이 DB 에서 사라졌거나 비활성화된 stale session → logout 으로 보내서 쿠키 clear
+    let me: Awaited<ReturnType<typeof getMe>> | null = null;
+    try {
+        me = await getMe(payload.sub, {
+            db,
+            kv: env.CACHE,
+            jwtSecret: env.JWT_SECRET,
+        });
+    } catch {
+        me = null;
+    }
+    if (!me) redirect("/api/auth/logout");
 
     return (
         <SidebarProvider>
