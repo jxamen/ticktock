@@ -185,6 +185,17 @@ npx expo run:android
 - 브랜치: `feature/*`, `bugfix/*`, `hotfix/*`
 - 소프트 삭제: `is_active` / 감사 필드: `created_by`·`updated_by`·`created_at`·`updated_at`
 
+## 작업 흐름 — 항상 커밋
+
+**의미 있는 작업 단위가 끝나면 항상 git 커밋**. 허가 요청 없이 진행. 세션이 언제 끊길지 모르므로 외부 상태에 남긴다.
+
+- 기능/수정 완료 → lint/type-check/build 통과 확인 → 즉시 커밋
+- 한 작업이 크면 **논리적 스텝마다** 분할 커밋 (예: 스키마 → 서비스 → Route → UI)
+- 메시지는 Conventional Commits. 본문에 "왜" 를 짧게
+- `.claude/` · `web/.dev.vars` 등 gitignore 는 애초에 스테이지되지 않으므로 신경 X
+- **push 는 별도 허가 필요** (로컬 커밋만 자동, remote 푸시는 명시 요청 시)
+- 실패하는 훅이 있으면 원인 수정 후 재커밋 (`--no-verify` 금지)
+
 ## 디자인 시스템 (Toss 기반)
 
 - **참조**: [.claude/docs/design.md](.claude/docs/design.md)
