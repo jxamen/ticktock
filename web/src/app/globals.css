@@ -1,0 +1,174 @@
+@import "tailwindcss";
+
+/* ─── 디자인 토큰 (토스 기반, 화이트라벨 대응) ─── */
+/* 총판별 CSS Variables 오버라이드로 테마 변경 */
+
+:root {
+    /* Primary (브랜드 액센트 — 토스 블루) */
+    --color-primary: #3182f6;
+    --color-primary-hover: #1b64da;
+    --color-primary-light: #ebf3fe;
+    --color-primary-fg: #ffffff;
+
+    /* Neutral (토스 그레이 스케일) */
+    --color-heading: #191f28;
+    --color-fg: #333d4b;
+    --color-fg-secondary: #6b7684;
+    --color-bg: #ffffff;
+    --color-bg-secondary: #f2f4f6;
+    --color-bg-tertiary: #e5e8eb;
+    --color-border: #e5e8eb;
+    --color-border-light: #f2f4f6;
+    --color-muted: #8b95a1;
+
+    /* Header */
+    --color-header-bg: #ffffff;
+    --color-header-fg: #191f28;
+
+    /* Sidebar (라이트 테마 — 토스 스타일) */
+    --color-sidebar-bg: #f7f8fa;
+    --color-sidebar-bg-hover: #eceef2;
+    --color-sidebar-bg-active: #e8ebf0;
+    --color-sidebar-fg: #4e5968;
+    --color-sidebar-fg-active: #191f28;
+    --color-sidebar-heading: #8b95a1;
+    --color-sidebar-border: #e5e8eb;
+
+    /* Semantic */
+    --color-success: #00c471;
+    --color-success-light: #e8faf1;
+    --color-warning: #f59e0b;
+    --color-warning-light: #fef6e0;
+    --color-error: #f04452;
+    --color-error-light: #fee7e9;
+    --color-info: #3182f6;
+    --color-info-light: #ebf3fe;
+
+    /* Category Accents (카테고리/미션타입별 구분 색상, 총판별 오버라이드 가능) */
+    --color-accent-teal: #26a69a;       /* 재무/매체/지갑 */
+    --color-accent-indigo: #5c6bc0;     /* 환급/콘텐츠/정산 */
+    --color-accent-green: #4caf50;      /* 신규/상품/주문/FAQ */
+    --color-accent-orange: #ff7043;     /* 리뷰/블로그/공지/알림 */
+    --color-accent-pink: #e91e63;       /* 체험단 */
+    --color-accent-amber: #f5a623;      /* SNS */
+    --color-accent-sky: #42a5f5;        /* 회원/직원/플레이스 */
+    --color-accent-purple: #7c4dff;     /* 총판 */
+    --color-accent-red: #ef5350;        /* 매체 원형 */
+    --color-accent-gray: #78909c;       /* 감사/설정 */
+
+    /* Typography */
+    --font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+
+    /* Shape (토스 — 좀 더 둥근 라운드) */
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+
+    /* Elevation (토스 — 부드럽고 넓은 그림자) */
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.12);
+
+    /* Transition */
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Tailwind CSS 4 — @theme 매핑 ─── */
+
+@theme inline {
+    --color-primary: var(--color-primary);
+    --color-primary-hover: var(--color-primary-hover);
+    --color-primary-light: var(--color-primary-light);
+    --color-primary-foreground: var(--color-primary-fg);
+    --color-heading: var(--color-heading);
+    --color-foreground: var(--color-fg);
+    --color-foreground-secondary: var(--color-fg-secondary);
+    --color-background: var(--color-bg);
+    --color-background-secondary: var(--color-bg-secondary);
+    --color-background-tertiary: var(--color-bg-tertiary);
+    --color-border: var(--color-border);
+    --color-border-light: var(--color-border-light);
+    --color-muted: var(--color-muted);
+    --color-header-bg: var(--color-header-bg);
+    --color-header-fg: var(--color-header-fg);
+    --color-sidebar-bg: var(--color-sidebar-bg);
+    --color-sidebar-bg-hover: var(--color-sidebar-bg-hover);
+    --color-sidebar-bg-active: var(--color-sidebar-bg-active);
+    --color-sidebar-fg: var(--color-sidebar-fg);
+    --color-sidebar-fg-active: var(--color-sidebar-fg-active);
+    --color-sidebar-heading: var(--color-sidebar-heading);
+    --color-sidebar-border: var(--color-sidebar-border);
+    --color-success: var(--color-success);
+    --color-success-light: var(--color-success-light);
+    --color-warning: var(--color-warning);
+    --color-warning-light: var(--color-warning-light);
+    --color-error: var(--color-error);
+    --color-error-light: var(--color-error-light);
+    --color-info: var(--color-info);
+    --color-info-light: var(--color-info-light);
+    --color-accent-teal: var(--color-accent-teal);
+    --color-accent-indigo: var(--color-accent-indigo);
+    --color-accent-green: var(--color-accent-green);
+    --color-accent-orange: var(--color-accent-orange);
+    --color-accent-pink: var(--color-accent-pink);
+    --color-accent-amber: var(--color-accent-amber);
+    --color-accent-sky: var(--color-accent-sky);
+    --color-accent-purple: var(--color-accent-purple);
+    --color-accent-red: var(--color-accent-red);
+    --color-accent-gray: var(--color-accent-gray);
+    --font-sans: var(--font-family);
+    --radius-sm: var(--radius-sm);
+    --radius-md: var(--radius-md);
+    --radius-lg: var(--radius-lg);
+    --radius-xl: var(--radius-xl);
+    --shadow-xs: var(--shadow-xs);
+    --shadow-sm: var(--shadow-sm);
+    --shadow-md: var(--shadow-md);
+    --shadow-lg: var(--shadow-lg);
+}
+
+/* ─── 기본 스타일 ─── */
+
+body {
+    background: var(--color-bg-secondary);
+    color: var(--color-fg);
+    font-family: var(--font-family);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* 숫자/금액 — tabular-nums */
+.tabular-nums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+}
+
+/* 헤드라인 */
+h1, h2, h3 {
+    color: var(--color-heading);
+    font-weight: 600;
+}
+
+/* 스크롤바 — 얇은 커스텀 */
+::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--color-muted);
+}

@@ -1,0 +1,37 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "ticktock-web",
+    "main": ".open-next/worker.js",
+    "compatibility_date": "2025-04-01",
+    "compatibility_flags": ["nodejs_compat"],
+    "assets": {
+        "directory": ".open-next/assets",
+        "binding": "ASSETS"
+    },
+
+    // Cloudflare D1 — 메인 데이터베이스
+    // 실제 database_id 는 `wrangler d1 create ticktock-db` 실행 후 채울 것
+    "d1_databases": [
+        {
+            "binding": "DB",
+            "database_name": "ticktock-db",
+            "database_id": "REPLACE_WITH_WRANGLER_D1_CREATE_OUTPUT"
+        }
+    ],
+
+    // Cloudflare KV — 세션, 페어링 코드, 캐시
+    "kv_namespaces": [
+        {
+            "binding": "CACHE",
+            "id": "REPLACE_WITH_WRANGLER_KV_CREATE_OUTPUT"
+        }
+    ],
+
+    // Cloudflare R2 — 파일 스토리지 (사용량 CSV 등 필요 시)
+    "r2_buckets": [
+        {
+            "binding": "FILES",
+            "bucket_name": "ticktock-files"
+        }
+    ]
+}

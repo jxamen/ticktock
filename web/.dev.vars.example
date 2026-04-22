@@ -1,0 +1,12 @@
+# Cloudflare Workers 로컬 개발용 환경 변수
+# 이 파일을 .dev.vars 로 복사해서 사용
+
+JWT_SECRET=dev-jwt-secret-change-in-production
+ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+APP_BASE_URL=http://localhost:3001
+
+# Firebase Admin (TickTock 에이전트 RTDB 브릿지용 — 선택)
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxx@your-project.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+FIREBASE_DB_URL=https://your-project-default-rtdb.firebaseio.com
