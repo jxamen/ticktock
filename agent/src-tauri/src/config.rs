@@ -60,8 +60,28 @@ pub fn config_path() -> Result<PathBuf> {
     Ok(programdata_dir()?.join(CONFIG_FILENAME))
 }
 
-pub fn db_path() -> Result<PathBuf> {
+// Legacy single-DB location. v0.1.8 and earlier used this for the one Windows
+// account on the machine. v0.1.9+ switches to per-user DBs so siblings don't
+// share state, but we still read this path during load_for_user() to migrate
+// a single-child install into the new layout without losing pairing.
+pub fn legacy_db_path() -> Result<PathBuf> {
     Ok(programdata_dir()?.join(DB_FILENAME))
+}
+
+// Per-Windows-user data directory. Each child Windows account gets its own
+// sqlite DB here so PIN, pairing (device_id), schedule, and usage are fully
+// isolated. The parent (admin) account never opens one of these — the admin
+// session skips AppState entirely.
+pub fn user_dir(username: &str) -> Result<PathBuf> {
+    let base = programdata_dir()?.join("users");
+    // Normalise: Windows account names are case-insensitive, so lowercase the
+    // directory to avoid two silos for "Child1" vs "child1" on case-sensitive
+    // filesystems or future migrations.
+    Ok(base.join(username.to_lowercase()))
+}
+
+pub fn user_db_path(username: &str) -> Result<PathBuf> {
+    Ok(user_dir(username)?.join(DB_FILENAME))
 }
 
 pub fn load() -> Result<AgentConfig> {

@@ -62,35 +62,9 @@ pub fn run_app() {
 }
 
 async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
-    let state = storage::AppState::load().await?;
-    app.manage(state.clone());
-
-    // Per-session guard now lives in spawner.rs — the service refuses to
-    // launch a user-session child in any account not listed in
-    // config.allowed_users, so by the time we reach bootstrap we know this
-    // session is permitted. For dev (tauri:dev has no service in the loop)
-    // we fall through unconditionally.
-
-    // Back-compat: earlier builds recorded the primary account in the kv
-    // store under `primary_user`. Migrate it into the new config.json once
-    // so upgraded installs don't lose their guard, then drop the kv entry.
-    #[cfg(windows)]
-    if let Ok(Some(legacy)) = state.kv_get("primary_user").await {
-        if !legacy.is_empty() {
-            if let Err(e) = config::add_allowed_user(&legacy) {
-                log::warn!("migrate primary_user → config failed: {e:#}");
-            }
-        }
-        let _ = state.kv_delete("primary_user").await;
-    }
-
-    // Admin (parent) sessions: the agent is only meant to restrict the
-    // *child*. If the logged-in Windows user is a local administrator we
-    // never show the lock overlay — instead a plain setup window opens so
-    // the parent can configure PIN / child users / pairing, then close the
-    // window and walk away. This is the primary escape hatch from the
-    // fail-closed design: a parent who accidentally installs onto their own
-    // account must not get trapped.
+    // Decide admin vs child BEFORE touching any DB: the two paths don't
+    // share state (admin session has no AppState) and a parent account must
+    // never open another user's silo or create one for itself.
     #[cfg(windows)]
     let is_admin = if cfg!(debug_assertions) {
         false
@@ -113,11 +87,47 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     #[cfg(not(windows))]
     let is_admin = false;
 
+    // Admin (parent) session: no AppState, no overlay, no loops. Just the
+    // setup window that manages allowed_users. PIN, pairing, schedule, and
+    // usage are all per-child — each child Windows account runs its own
+    // agent instance with its own DB and handles those from its own login.
     if is_admin {
-        log::info!("admin session detected — skipping overlay, opening setup window");
+        log::info!("admin session — opening setup window, skipping AppState");
         lock::setup_window::show(&app).await?;
-        state.set_locked(false, schedule::LockReason::Manual).await;
-    } else if let Some(remaining) = state.session_remaining_seconds().await {
+        return Ok(());
+    }
+
+    // Child session: load the DB silo for *this* Windows account.
+    //
+    //   %ProgramData%\TickTock\users\{username}\ticktock.sqlite
+    //
+    // Sibling child accounts on the same PC get their own silos — so
+    // separate device_ids (server counts as separate seats), separate
+    // PINs, schedules, usage, one-time-PIN state. That's the whole point
+    // of the "1 PC, parent + child1/2/3" topology.
+    #[cfg(windows)]
+    let username = current_user::current_username()?;
+    #[cfg(not(windows))]
+    let username = String::from("dev");
+
+    let state = storage::AppState::load_for_user(&username).await?;
+    app.manage(state.clone());
+
+    // Back-compat: v0.1.x stored the primary account in the migrated legacy
+    // DB's kv under `primary_user`. After AppState::load_for_user has
+    // adopted that legacy DB (if applicable), promote the kv entry into
+    // config.allowed_users so the spawner gate keeps working, then drop it.
+    #[cfg(windows)]
+    if let Ok(Some(legacy)) = state.kv_get("primary_user").await {
+        if !legacy.is_empty() {
+            if let Err(e) = config::add_allowed_user(&legacy) {
+                log::warn!("migrate primary_user → config failed: {e:#}");
+            }
+        }
+        let _ = state.kv_delete("primary_user").await;
+    }
+
+    if let Some(remaining) = state.session_remaining_seconds().await {
         // Fail-closed: lock on boot by default. But if a one-time-PIN session
         // was in progress when we restarted (persisted in kv), resume it —
         // otherwise the PIN is already consumed and the child would be locked
@@ -137,16 +147,6 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     }
 
     tokio::spawn(pairing::run_loop(app.clone(), state.clone()));
-
-    if is_admin {
-        // Admin session only runs the pairing loop — everything else
-        // (schedule ticker, firebase listener, heartbeat, usage poller,
-        // timer / overlay watchdogs) exists to enforce restrictions on the
-        // child, so running it under the parent's session would either do
-        // nothing useful or actively risk locking the parent out.
-        return Ok(());
-    }
-
     tokio::spawn(firebase::run_listener(app.clone(), state.clone()));
     tokio::spawn(schedule::run_ticker(app.clone(), state.clone()));
     #[cfg(windows)]

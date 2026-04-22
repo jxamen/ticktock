@@ -101,9 +101,17 @@ struct OpenSession {
 }
 
 impl AppState {
-    pub async fn load() -> Result<Self> {
-        let db_path = crate::config::db_path()?;
-        log::info!("sqlite: {}", db_path.display());
+    pub async fn load_for_user(username: &str) -> Result<Self> {
+        let db_path = crate::config::user_db_path(username)?;
+
+        // One-shot migration: v0.1.8 and earlier wrote a single
+        // machine-wide DB. If this is the first v0.1.9 boot AND this
+        // user looks like the original single child (the only name in
+        // allowed_users, or allowed_users still empty), adopt the legacy
+        // DB so pairing / PIN / schedule survive the upgrade.
+        migrate_legacy_db_if_applicable(username, &db_path);
+
+        log::info!("sqlite (user={}): {}", username, db_path.display());
 
         let conn = tokio::task::spawn_blocking(move || -> Result<Connection> {
             if let Some(parent) = db_path.parent() {
@@ -685,6 +693,64 @@ fn load_daily_total(conn: &Connection, date_ymd: &str) -> Result<i64> {
             |r| r.get::<_, i64>(0),
         )
         .unwrap_or(0))
+}
+
+fn migrate_legacy_db_if_applicable(username: &str, user_db_path: &std::path::Path) {
+    // Already migrated or brand-new user — nothing to do.
+    if user_db_path.exists() {
+        return;
+    }
+    let legacy = match crate::config::legacy_db_path() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if !legacy.exists() {
+        return;
+    }
+
+    // Only adopt when this user is plausibly "the" single child from the old
+    // install: allowed_users is either empty (never-configured) or contains
+    // just this user. If multiple children are already listed, we can't know
+    // whose silo the legacy DB belongs to — leave it alone and let every
+    // child start fresh rather than silently inheriting another's pairing.
+    let cfg = match crate::config::load() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let matches_single_child = cfg.allowed_users.is_empty()
+        || (cfg.allowed_users.len() == 1
+            && cfg.allowed_users[0].eq_ignore_ascii_case(username));
+    if !matches_single_child {
+        log::info!(
+            "legacy DB present but allowed_users has {} entries — not migrating for {username}",
+            cfg.allowed_users.len()
+        );
+        return;
+    }
+
+    if let Some(parent) = user_db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::rename(&legacy, user_db_path) {
+        Ok(()) => log::info!(
+            "migrated legacy DB → {} for user '{}'",
+            user_db_path.display(),
+            username
+        ),
+        Err(e) => log::warn!(
+            "legacy DB migration failed ({} → {}): {e:#}",
+            legacy.display(),
+            user_db_path.display()
+        ),
+    }
+    // Also sweep the WAL / SHM siblings sqlite may have left behind.
+    for ext in ["sqlite-wal", "sqlite-shm"] {
+        let from = legacy.with_extension(ext);
+        let to = user_db_path.with_extension(ext);
+        if from.exists() {
+            let _ = std::fs::rename(&from, &to);
+        }
+    }
 }
 
 fn default_schedule() -> Schedule {

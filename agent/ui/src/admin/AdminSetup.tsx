@@ -3,26 +3,29 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // Admin setup console — rendered only in the "admin" Tauri window, which
-// opens for Windows administrator sessions (parents). Separate from the
-// full-screen child overlay: closable, not on top, just a configuration
-// panel. Sections: PIN, child Windows accounts, pairing code.
+// opens for Windows administrator sessions (parents).
+//
+// Scope (v0.1.9+): this console manages ONLY the list of child Windows
+// accounts this PC is restricted for. PIN and pairing are now per-child —
+// each child Windows account runs its own agent instance with its own DB,
+// device id, PIN, schedule, and usage. The child handles their own first-run
+// PIN + pairing from their own Windows login (overlay UI). The parent just
+// needs to (a) create the child Windows accounts in Windows itself, and
+// (b) register those account names here so the overlay activates when the
+// child logs in.
+//
+// Why the simpler UI: earlier v0.1.8 builds exposed a single global PIN and
+// pairing code from this admin window, which couldn't represent multiple
+// siblings on the same PC. Moving that to per-child session state is what
+// enables proper "1 PC, parent + child1/2/3, each managed separately" —
+// and matches the subscription model where each child = one seat.
 
 export function AdminSetup() {
-  const [hasPin, setHasPin] = useState<boolean | null>(null);
-  const [pairingCode, setPairingCode] = useState<string | null>(null);
-  const [paired, setPaired] = useState<boolean | null>(null);
   const [allowed, setAllowed] = useState<string[] | null>(null);
 
   const refresh = async () => {
     try {
-      const [pin, pairing, users] = await Promise.all([
-        invoke<boolean>("has_pin"),
-        invoke<{ paired: boolean; code: string | null }>("get_pairing_status"),
-        invoke<string[]>("list_allowed_users"),
-      ]);
-      setHasPin(pin);
-      setPaired(pairing.paired);
-      setPairingCode(pairing.code);
+      const users = await invoke<string[]>("list_allowed_users");
       setAllowed(users);
     } catch {
       // agent still starting — keep showing stale state
@@ -39,14 +42,13 @@ export function AdminSetup() {
     <div style={{ padding: 32, minHeight: "100vh", color: "#e5e7eb", background: "#0b0d10", fontFamily: "system-ui, sans-serif" }}>
       <header style={{ marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 28 }}>TickTock 관리자 설정</h1>
-        <p style={{ opacity: 0.65, margin: "8px 0 0" }}>
+        <p style={{ opacity: 0.65, margin: "8px 0 0", lineHeight: 1.55 }}>
           부모(관리자) 계정에서 사용하는 설정 콘솔입니다. 이 창을 닫아도 자녀 계정의 잠금에는 영향이 없습니다.
         </p>
       </header>
 
-      <PinSection hasPin={hasPin} onChanged={refresh} />
+      <HowItWorksSection />
       <AllowedUsersSection users={allowed} onChanged={refresh} />
-      <PairingSection paired={paired} code={pairingCode} />
 
       <footer style={{ marginTop: 40, opacity: 0.5, fontSize: 13 }}>
         <button
@@ -82,80 +84,21 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function PinSection({ hasPin, onChanged }: { hasPin: boolean | null; onChanged: () => void }) {
-  const [pin, setPin] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
-
-  const digits = (s: string) => s.replace(/\D/g, "").slice(0, 6);
-  const valid = pin.length >= 4 && pin.length <= 6 && pin === confirm;
-
-  const submit = async () => {
-    setErr(null);
-    if (!valid) { setErr("PIN은 4~6자리 숫자이고 두 번 일치해야 합니다."); return; }
-    setBusy(true);
-    try {
-      // setup_pin_and_unlock rejects if a PIN already exists, so when
-      // changing the PIN we go through set_pin which just overwrites the
-      // hash. First-time setup uses setup_pin_and_unlock so the pairing
-      // flow kicks in if a device_id is already present.
-      if (hasPin) {
-        await invoke("set_pin", { pin });
-      } else {
-        await invoke("setup_pin_and_unlock", { pin });
-      }
-      setPin(""); setConfirm(""); setShowForm(false);
-      onChanged();
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
+function HowItWorksSection() {
   return (
-    <Section title="PIN">
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{
-          width: 10, height: 10, borderRadius: 5,
-          background: hasPin ? "#10b981" : "#9ca3af",
-        }} />
-        <span>{hasPin === null ? "확인 중…" : hasPin ? "설정됨" : "미설정"}</span>
-        <button
-          onClick={() => setShowForm(v => !v)}
-          style={smallBtn}
-        >
-          {hasPin ? "변경" : "설정"}
-        </button>
-      </div>
-      {showForm && (
-        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8, maxWidth: 280 }}>
-          <input
-            type="password"
-            inputMode="numeric"
-            autoFocus
-            value={pin}
-            onChange={e => setPin(digits(e.target.value))}
-            placeholder="새 PIN (4~6자리)"
-            style={input}
-          />
-          <input
-            type="password"
-            inputMode="numeric"
-            value={confirm}
-            onChange={e => setConfirm(digits(e.target.value))}
-            onKeyDown={e => e.key === "Enter" && submit()}
-            placeholder="PIN 다시 입력"
-            style={input}
-          />
-          <button onClick={submit} disabled={busy || !valid} style={{ ...primaryBtn, opacity: busy || !valid ? 0.5 : 1 }}>
-            {busy ? "저장 중…" : "저장"}
-          </button>
-          {err && <div style={{ color: "#f87171", fontSize: 13 }}>{err}</div>}
-        </div>
-      )}
+    <Section title="설정 순서">
+      <ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7, opacity: 0.85 }}>
+        <li>Windows 설정에서 각 자녀에게 <strong>표준 사용자 계정</strong>을 만듭니다 (예: <code>child1</code>, <code>child2</code>).</li>
+        <li>아래 "자녀 Windows 계정" 에 만든 계정명을 그대로 추가합니다. 관리자 계정(본인)은 추가하지 않습니다.</li>
+        <li>자녀 계정으로 Windows 로그인하면 TickTock 이 각 자녀마다 독립적으로:
+          <ul style={{ marginTop: 6 }}>
+            <li>첫 PIN 설정 화면 표시</li>
+            <li>페어링 코드 발급 → 부모 앱에서 해당 자녀로 등록</li>
+            <li>각자의 스케줄 / 사용 시간 / 1회성 PIN 을 따로 관리</li>
+          </ul>
+        </li>
+        <li>부모 앱에는 자녀 수만큼의 디바이스가 등록됩니다. 이 수는 구독 플랜의 seat 한도를 따릅니다.</li>
+      </ol>
     </Section>
   );
 }
@@ -182,7 +125,7 @@ function AllowedUsersSection({ users, onChanged }: { users: string[] | null; onC
   };
 
   const remove = async (u: string) => {
-    if (!confirm(`'${u}' 계정을 목록에서 제거하시겠습니까?\n(다음 부팅부터는 이 계정에서 오버레이가 뜨지 않습니다.)`)) return;
+    if (!confirm(`'${u}' 계정을 목록에서 제거하시겠습니까?\n(다음 부팅부터는 이 계정에서 오버레이가 뜨지 않습니다. 해당 자녀의 기존 PIN/페어링 데이터는 유지됩니다.)`)) return;
     try {
       await invoke("remove_allowed_user", { username: u });
       onChanged();
@@ -194,7 +137,7 @@ function AllowedUsersSection({ users, onChanged }: { users: string[] | null; onC
   return (
     <Section title="자녀 Windows 계정">
       <p style={{ opacity: 0.7, fontSize: 13, margin: "0 0 12px" }}>
-        여기에 등록된 계정으로 Windows 에 로그인했을 때만 잠금 오버레이가 실행됩니다. 부모(관리자) 계정은 등록하지 마세요.
+        여기에 등록된 계정으로 Windows 에 로그인했을 때만 잠금 오버레이가 실행됩니다.
       </p>
       {users === null ? (
         <div style={{ opacity: 0.5 }}>불러오는 중…</div>
@@ -228,36 +171,6 @@ function AllowedUsersSection({ users, onChanged }: { users: string[] | null; onC
         </button>
       </div>
       {err && <div style={{ color: "#f87171", fontSize: 13, marginTop: 8 }}>{err}</div>}
-    </Section>
-  );
-}
-
-function PairingSection({ paired, code }: { paired: boolean | null; code: string | null }) {
-  return (
-    <Section title="부모 앱 페어링">
-      {paired === null ? (
-        <div style={{ opacity: 0.5 }}>확인 중…</div>
-      ) : paired ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 10, height: 10, borderRadius: 5, background: "#10b981" }} />
-          <span>연결됨</span>
-        </div>
-      ) : (
-        <>
-          <p style={{ opacity: 0.7, fontSize: 13, margin: "0 0 12px" }}>
-            부모 앱에서 아래 6자리 코드를 입력하면 페어링이 완료됩니다. 코드는 10분마다 갱신됩니다.
-          </p>
-          <div style={{
-            fontSize: 48, fontWeight: 700, letterSpacing: 8,
-            fontVariantNumeric: "tabular-nums",
-            padding: "16px 24px",
-            border: "2px solid #2563eb", borderRadius: 12,
-            display: "inline-block",
-          }}>
-            {code ?? "——————"}
-          </div>
-        </>
-      )}
     </Section>
   );
 }

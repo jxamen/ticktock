@@ -204,6 +204,29 @@ fn diagnose_render(
     body.push_str("================================\n");
     body.push_str(&format!("Windows 사용자: {username}\n\n"));
 
+    // Per-user DB layout preview (v0.1.9+). Useful for verifying that each
+    // child Windows account will land in its own silo before installing.
+    body.push_str("데이터 경로 (v0.1.9+ per-user 사일로):\n");
+    match crate::config::programdata_dir() {
+        Ok(p) => body.push_str(&format!("  기본 ProgramData 디렉토리: {}\n", p.display())),
+        Err(e) => body.push_str(&format!("  기본 디렉토리 확인 실패: {e:#}\n")),
+    }
+    match crate::config::legacy_db_path() {
+        Ok(p) => body.push_str(&format!(
+            "  legacy (v0.1.8 이하) DB: {} ({})\n",
+            p.display(),
+            if p.exists() { "존재 — 첫 자녀 로그인 시 자동 이동" } else { "없음" }
+        )),
+        Err(e) => body.push_str(&format!("  legacy DB path 에러: {e:#}\n")),
+    }
+    for sample in [username, "child1", "child2", "child3"] {
+        match crate::config::user_db_path(sample) {
+            Ok(p) => body.push_str(&format!("  {sample}: {}\n", p.display())),
+            Err(e) => body.push_str(&format!("  {sample}: 에러 {e:#}\n")),
+        }
+    }
+    body.push('\n');
+
     body.push_str(&match &thread {
         Ok(true) => "thread(current) admin check: TRUE (이미 elevated 또는 UAC off)\n".to_string(),
         Ok(false) => "thread(current) admin check: FALSE (UAC-filtered 일 수 있음)\n".to_string(),
