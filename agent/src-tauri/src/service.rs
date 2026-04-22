@@ -131,6 +131,14 @@ fn run_service() -> Result<()> {
         process_id: None,
     })?;
 
+    // Shared %ProgramData%\TickTock directory + ACL. The service runs as
+    // LocalSystem (the only principal on the box that can mkdir under
+    // ProgramData *and* edit the DACL without UAC), so do it here before
+    // spawning user-session children that will need to read/write the DB.
+    if let Err(e) = crate::config::ensure_dir_with_acl() {
+        log::warn!("failed to prepare ProgramData dir: {e:#}");
+    }
+
     // Service-side auto-updater: a dedicated thread polls GitHub Releases,
     // verifies the signature, and runs the installer silently (LocalSystem →
     // no UAC). Runs in parallel with the child supervisor.

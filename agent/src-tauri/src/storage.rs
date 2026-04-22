@@ -16,10 +16,8 @@ use chrono_tz::Tz;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tauri::{AppHandle, Manager};
 use tokio::sync::{Notify, RwLock};
 
 use crate::{
@@ -103,8 +101,8 @@ struct OpenSession {
 }
 
 impl AppState {
-    pub async fn load(app: &AppHandle) -> Result<Self> {
-        let db_path = resolve_db_path(app)?;
+    pub async fn load() -> Result<Self> {
+        let db_path = crate::config::db_path()?;
         log::info!("sqlite: {}", db_path.display());
 
         let conn = tokio::task::spawn_blocking(move || -> Result<Connection> {
@@ -640,22 +638,6 @@ impl AppState {
     }
 }
 
-fn resolve_db_path(app: &AppHandle) -> Result<PathBuf> {
-    // In debug builds (i.e. `npm run tauri:dev`) keep data in a separate
-    // folder so local development doesn't reuse / overwrite the installed
-    // agent's DB on the same user profile. Prod installs continue to use
-    // the per-user app-local-data directory.
-    if cfg!(debug_assertions) {
-        let home = std::env::var_os("USERPROFILE")
-            .or_else(|| std::env::var_os("HOME"))
-            .context("no home directory (USERPROFILE/HOME)")?;
-        return Ok(PathBuf::from(home)
-            .join(".ticktock-dev")
-            .join("ticktock.sqlite"));
-    }
-    let dir = app.path().app_local_data_dir().context("no app local data dir")?;
-    Ok(dir.join("ticktock.sqlite"))
-}
 
 fn load_initial_state(conn: &Connection) -> Result<(Schedule, Tz)> {
     let schedule_json: Option<String> = conn

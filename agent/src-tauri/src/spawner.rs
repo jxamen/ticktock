@@ -23,7 +23,10 @@ use std::{ffi::OsString, mem, os::windows::ffi::OsStrExt, ptr};
 
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
-use windows::Win32::Security::SECURITY_ATTRIBUTES;
+use windows::Win32::Security::{
+    GetTokenInformation, LookupAccountSidW, SECURITY_ATTRIBUTES, SID_NAME_USE, TokenUser,
+    TOKEN_USER,
+};
 use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
 use windows::Win32::System::Threading::{
@@ -63,6 +66,21 @@ pub fn spawn_in_active_session() -> Result<ChildProcess> {
             .context("WTSQueryUserToken failed (no logged-on user in target session)")?;
         // Ensure the token handle is closed on every path.
         let _token_guard = scopeguard(|| { let _ = CloseHandle(user_token); });
+
+        // allowed_users gate: if the parent's or any other account owns the
+        // active session, exit here instead of spawning a child that would
+        // just flash an overlay at them before exiting. Fresh installs with
+        // an empty list fall through — the first-run UI needs to appear so
+        // the parent (or child) can complete PIN setup, after which that
+        // account is recorded and the gate starts enforcing.
+        let username = username_for_token(user_token)
+            .context("resolve username for session token")?;
+        if !crate::config::is_allowed(&username) {
+            bail!(
+                "session owned by '{}' — not in allowed_users; skipping spawn",
+                username
+            );
+        }
 
         let mut env_block: *mut std::ffi::c_void = ptr::null_mut();
         CreateEnvironmentBlock(&mut env_block, Some(user_token), false).ok()
@@ -124,6 +142,66 @@ pub fn is_alive(child: &ChildProcess) -> bool {
 fn wstr(s: String) -> Vec<u16> {
     let os = OsString::from(s);
     os.encode_wide().chain(std::iter::once(0)).collect()
+}
+
+// Resolve the Windows account name ("taehoon", "child1", ...) that owns the
+// given session token. Two-step Win32 dance: GetTokenInformation(TokenUser)
+// to pull the SID out, then LookupAccountSidW to turn it into a string.
+unsafe fn username_for_token(token: HANDLE) -> Result<String> {
+    // First call sizes the buffer; the expected error is ERROR_INSUFFICIENT_BUFFER.
+    let mut needed: u32 = 0;
+    let _ = GetTokenInformation(token, TokenUser, None, 0, &mut needed);
+    if needed == 0 {
+        bail!("GetTokenInformation(TokenUser) returned zero size");
+    }
+    let mut buf = vec![0u8; needed as usize];
+    GetTokenInformation(
+        token,
+        TokenUser,
+        Some(buf.as_mut_ptr() as *mut _),
+        needed,
+        &mut needed,
+    )
+    .ok()
+    .context("GetTokenInformation(TokenUser)")?;
+
+    let tu = &*(buf.as_ptr() as *const TOKEN_USER);
+    let sid = tu.User.Sid;
+
+    // Size again — LookupAccountSidW returns the required lengths via
+    // ERROR_INSUFFICIENT_BUFFER on the first call.
+    let mut name_len: u32 = 0;
+    let mut domain_len: u32 = 0;
+    let mut sid_type: SID_NAME_USE = SID_NAME_USE::default();
+    let _ = LookupAccountSidW(
+        PCWSTR::null(),
+        sid,
+        None,
+        &mut name_len,
+        None,
+        &mut domain_len,
+        &mut sid_type,
+    );
+    if name_len == 0 {
+        bail!("LookupAccountSidW returned zero name length");
+    }
+    let mut name = vec![0u16; name_len as usize];
+    let mut domain = vec![0u16; domain_len.max(1) as usize];
+    LookupAccountSidW(
+        PCWSTR::null(),
+        sid,
+        Some(PWSTR(name.as_mut_ptr())),
+        &mut name_len,
+        Some(PWSTR(domain.as_mut_ptr())),
+        &mut domain_len,
+        &mut sid_type,
+    )
+    .ok()
+    .context("LookupAccountSidW")?;
+
+    // name_len comes back as the count *without* the terminating NUL.
+    let end = name_len as usize;
+    Ok(String::from_utf16_lossy(&name[..end]))
 }
 
 // Tiny scopeguard to avoid pulling in a crate for a two-line cleanup helper.

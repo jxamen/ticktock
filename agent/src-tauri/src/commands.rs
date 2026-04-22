@@ -128,16 +128,81 @@ pub async fn setup_pin_and_unlock(
     }
     let hash = pin::hash(&pin).map_err(s)?;
     state.kv_set("pin_hash", &hash).await.map_err(s)?;
-    // Record the Windows user who set up the PIN — the agent will only run
-    // under this account from now on (other sessions exit at boot).
+    // Record the Windows user who set up the PIN into the shared config so
+    // the service's spawner filters out other sessions from now on — but
+    // only when the PIN was set from a standard-user (child) session. If
+    // the parent (an administrator) sets the PIN from their own account,
+    // we must NOT add them to allowed_users: the parent's account is
+    // supposed to stay unrestricted. The parent adds the child later via
+    // `add_allowed_user` from the admin setup UI.
     #[cfg(windows)]
-    if let Ok(username) = crate::current_user::current_username() {
-        let _ = state.kv_set("primary_user", &username).await;
+    {
+        let is_admin = crate::admin::is_current_process_admin().unwrap_or(false);
+        if !is_admin {
+            if let Ok(username) = crate::current_user::current_username() {
+                if let Err(e) = crate::config::add_allowed_user(&username) {
+                    log::warn!("add_allowed_user failed: {e:#}");
+                }
+            }
+        } else {
+            log::info!("admin session — skipping auto-add to allowed_users");
+        }
     }
     if state.kv_get("device_id").await.map_err(s)?.is_some() {
         lock::overlay::hide(&app).await.map_err(s)?;
         state.set_locked(false, LockReason::Manual).await;
     }
+    Ok(())
+}
+
+// Admin-only: the setup UI uses this to decide whether to render the admin
+// console (allowed_users management + pairing + PIN) or the child lock UX.
+#[tauri::command]
+pub async fn is_admin_session() -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        Ok(crate::admin::is_current_process_admin().unwrap_or(false))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
+// List currently permitted child Windows accounts. Shown in the admin UI.
+#[tauri::command]
+pub async fn list_allowed_users() -> Result<Vec<String>, String> {
+    let cfg = crate::config::load().map_err(s)?;
+    Ok(cfg.allowed_users)
+}
+
+// Add a Windows account name to allowed_users. The spawner will start
+// launching the overlay agent when that account logs in. Trimmed; empty
+// input is rejected so the UI can't accidentally "permit everyone".
+#[tauri::command]
+pub async fn add_allowed_user(username: String) -> Result<(), String> {
+    let name = username.trim();
+    if name.is_empty() {
+        return Err("사용자명이 비어 있습니다".into());
+    }
+    crate::config::add_allowed_user(name).map_err(s)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_allowed_user(username: String) -> Result<(), String> {
+    let name = username.trim().to_string();
+    if name.is_empty() {
+        return Err("사용자명이 비어 있습니다".into());
+    }
+    let mut cfg = crate::config::load().map_err(s)?;
+    let before = cfg.allowed_users.len();
+    cfg.allowed_users
+        .retain(|u| !u.eq_ignore_ascii_case(&name));
+    if cfg.allowed_users.len() == before {
+        return Err(format!("'{}' 은(는) 목록에 없습니다", name));
+    }
+    crate::config::save(&cfg).map_err(s)?;
     Ok(())
 }
 
