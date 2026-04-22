@@ -30,14 +30,21 @@ use windows::Win32::Security::{
 use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
 use windows::Win32::System::Threading::{
-    CreateProcessAsUserW, GetExitCodeProcess, CREATE_NEW_CONSOLE, CREATE_UNICODE_ENVIRONMENT,
-    PROCESS_INFORMATION, STARTUPINFOW,
+    CreateProcessAsUserW, GetExitCodeProcess, TerminateProcess, CREATE_NEW_CONSOLE,
+    CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTUPINFOW,
 };
 
 pub struct ChildProcess {
     pub process: HANDLE,
     pub thread: HANDLE,
     pub pid: u32,
+    /// The interactive Windows session this child was spawned into.
+    /// Used by the supervisor to detect console-session switches (Fast
+    /// User Switching) and terminate the stale child so the new console
+    /// user gets their own agent instance — otherwise v0.1.10 would
+    /// leave a child alive in the previous user's (now-disconnected)
+    /// session and the new user never saw an overlay.
+    pub session_id: u32,
 }
 
 impl Drop for ChildProcess {
@@ -124,7 +131,25 @@ pub fn spawn_in_active_session() -> Result<ChildProcess> {
             process: pi.hProcess,
             thread: pi.hThread,
             pid: pi.dwProcessId,
+            session_id,
         })
+    }
+}
+
+pub fn active_console_session() -> Option<u32> {
+    unsafe {
+        let id = WTSGetActiveConsoleSessionId();
+        if id == u32::MAX {
+            None
+        } else {
+            Some(id)
+        }
+    }
+}
+
+pub fn terminate(child: &ChildProcess) {
+    unsafe {
+        let _ = TerminateProcess(child.process, 0);
     }
 }
 

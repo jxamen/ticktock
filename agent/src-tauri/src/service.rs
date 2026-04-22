@@ -170,18 +170,45 @@ fn supervise_user_session_child(shutdown_rx: &std::sync::mpsc::Receiver<()>) {
 
     let mut child: Option<spawner::ChildProcess> = None;
     loop {
-        // Drop dead children.
+        let active_session = spawner::active_console_session();
+
+        // Three exit paths for the current child:
+        //   (a) it died → drop handle, respawn
+        //   (b) the console switched to a different Windows account (Fast
+        //       User Switching: parent → child, child1 → child2) → kill
+        //       the now-stale child and spawn fresh in the new session.
+        //       Without this, v0.1.10 would leave the previous user's
+        //       agent alive in a disconnected session and the new user
+        //       never saw their overlay.
+        //   (c) the console went to "no active session" (lockscreen between
+        //       switches, or all sessions disconnected) → leave the child
+        //       running; it'll be reused when that session reactivates.
         if let Some(c) = &child {
             if !spawner::is_alive(c) {
-                log::info!("user-session child exited; will respawn");
+                log::info!("user-session child pid={} exited; will respawn", c.pid);
                 child = None;
+            } else if let Some(cur) = active_session {
+                if c.session_id != cur {
+                    log::info!(
+                        "console session changed ({} → {}); terminating stale child pid={}",
+                        c.session_id, cur, c.pid
+                    );
+                    spawner::terminate(c);
+                    // Give the kernel a moment to reap before the next
+                    // spawn attempt so handles don't briefly double up.
+                    std::thread::sleep(Duration::from_millis(300));
+                    child = None;
+                }
             }
         }
         // Spawn if we don't have a live child and a session is available.
         if child.is_none() {
             match spawner::spawn_in_active_session() {
                 Ok(c) => {
-                    log::info!("spawned user-session child pid={}", c.pid);
+                    log::info!(
+                        "spawned user-session child pid={} session={}",
+                        c.pid, c.session_id
+                    );
                     child = Some(c);
                 }
                 Err(e) => {
