@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSidebar } from "./SidebarContext";
 
 type Props = {
@@ -26,26 +27,26 @@ export function Header({ userEmail, displayName }: Props) {
                         <path d="M3 15H17" />
                     </svg>
                 </button>
-                <a href="/devices" className="flex items-center gap-1.5">
+                <Link href="/devices" className="flex items-center gap-1.5">
                     <span className="text-[15px] font-bold text-heading">TickTock</span>
                     <span className="text-[11px] text-foreground-secondary">관리 콘솔</span>
-                </a>
+                </Link>
             </div>
 
             {/* 우측 */}
             <div className="flex items-center gap-1">
-                <a
+                <Link
                     href="/members"
                     className="rounded-lg px-3 py-1.5 text-[14px] text-foreground-secondary transition-colors hover:bg-background-secondary hover:text-foreground"
                 >
                     사용자 관리
-                </a>
-                <a
+                </Link>
+                <Link
                     href="/settings"
                     className="rounded-lg px-3 py-1.5 text-[14px] text-foreground-secondary transition-colors hover:bg-background-secondary hover:text-foreground"
                 >
                     설정
-                </a>
+                </Link>
                 <form action="/api/auth/logout" method="POST" className="ml-1">
                     <button
                         type="submit"
