@@ -8,6 +8,7 @@ export const users = sqliteTable(
         displayName: text("display_name").notNull(),
         phone: text("phone"),
         firebaseUid: text("firebase_uid").unique(),
+        seatLimit: integer("seat_limit").notNull().default(5),
         isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
         createdAt: text("created_at").notNull(),
         updatedAt: text("updated_at").notNull(),
