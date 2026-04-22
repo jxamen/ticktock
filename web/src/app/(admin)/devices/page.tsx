@@ -1,10 +1,14 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { listDevicesWithSummary } from "@/lib/services/subscription/managed-user.service";
+import { getMySeats } from "@/lib/services/plan/plan.service";
 
 export default async function DevicesPage() {
     const { userId, db } = await requireSession();
-    const rows = await listDevicesWithSummary(userId, { db });
+    const [rows, seats] = await Promise.all([
+        listDevicesWithSummary(userId, { db }),
+        getMySeats(userId, { db }),
+    ]);
 
     return (
         <div>
@@ -15,7 +19,16 @@ export default async function DevicesPage() {
                         내가 관리하는 자녀 PC 목록
                     </p>
                 </div>
+                <Link
+                    href="/settings"
+                    className="text-[12px] font-medium text-primary hover:underline"
+                >
+                    플랜 설정 →
+                </Link>
             </div>
+
+            <SeatsBanner seats={seats} />
+
 
             {rows.length === 0 ? (
                 <div className="rounded-xl border border-border bg-background p-10 text-center">
@@ -73,6 +86,59 @@ export default async function DevicesPage() {
                     </table>
                 </div>
             )}
+        </div>
+    );
+}
+
+type SeatsPayload = Awaited<ReturnType<typeof import("@/lib/services/plan/plan.service").getMySeats>>;
+
+function SeatsBanner({ seats }: { seats: SeatsPayload }) {
+    const ratio = seats.seatLimit === 0 ? 100 : Math.min(100, (seats.used / seats.seatLimit) * 100);
+    const danger = seats.used >= seats.seatLimit;
+    return (
+        <div className="mb-6 rounded-xl border border-border bg-background p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <div className="text-[13px] font-medium text-foreground-secondary">Seat 사용량</div>
+                    <div className="mt-0.5 tabular-nums">
+                        <span className={`text-[20px] font-bold ${danger ? "text-error" : "text-heading"}`}>
+                            {seats.used}
+                        </span>
+                        <span className="text-[14px] text-foreground-secondary"> / {seats.seatLimit}</span>
+                        <span className="ml-2 text-[12px] text-muted">
+                            (남은 {seats.available}석)
+                        </span>
+                    </div>
+                </div>
+                {seats.seats.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                        {seats.seats.map((s) => (
+                            <span
+                                key={s.managedUserId}
+                                title={`${s.deviceName} · ${s.windowsUsername}`}
+                                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium ${
+                                    s.subscriptionActive
+                                        ? "bg-success-light text-success"
+                                        : "bg-error-light text-error"
+                                }`}
+                            >
+                                <span
+                                    className={`h-1.5 w-1.5 rounded-full ${
+                                        s.subscriptionActive ? "bg-success" : "bg-error"
+                                    }`}
+                                />
+                                {s.displayName}
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </div>
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-background-tertiary">
+                <div
+                    className={`h-full transition-all ${danger ? "bg-error" : "bg-primary"}`}
+                    style={{ width: `${ratio}%` }}
+                />
+            </div>
         </div>
     );
 }

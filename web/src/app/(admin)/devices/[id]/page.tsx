@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
-import { devices, devicePermissions } from "@/lib/db/schema";
+import { commandsIssued, devices, devicePermissions, users } from "@/lib/db/schema";
 import {
     listManagedUsers,
     assertDeviceViewer,
@@ -36,6 +36,30 @@ export default async function DeviceDetailPage({ params }: Props) {
     const isOwner = myPerm?.role === "owner";
 
     const managedUsersRows = await listManagedUsers(userId, deviceId, { db });
+
+    const recentCommands = managedUsersRows.length
+        ? await db
+              .select({
+                  id: commandsIssued.id,
+                  managedUserId: commandsIssued.managedUserId,
+                  type: commandsIssued.type,
+                  status: commandsIssued.status,
+                  issuedAt: commandsIssued.issuedAt,
+                  actorEmail: users.email,
+                  actorDisplayName: users.displayName,
+              })
+              .from(commandsIssued)
+              .innerJoin(users, eq(commandsIssued.issuedBy, users.id))
+              .where(
+                  inArray(
+                      commandsIssued.managedUserId,
+                      managedUsersRows.map((m) => m.id),
+                  ),
+              )
+              .orderBy(desc(commandsIssued.issuedAt))
+              .limit(20)
+              .all()
+        : [];
 
     return (
         <div>
@@ -71,8 +95,107 @@ export default async function DeviceDetailPage({ params }: Props) {
                     createdAt: r.createdAt,
                 }))}
             />
+
+            {recentCommands.length > 0 && (
+                <section className="mt-8">
+                    <h2 className="mb-3 text-[16px] font-semibold text-heading">최근 명령</h2>
+                    <div className="overflow-x-auto rounded-xl border border-border bg-background">
+                        <table className="w-full min-w-[560px] text-[14px]">
+                            <thead className="text-[13px] text-foreground-secondary">
+                                <tr className="border-b border-border-light">
+                                    <th className="px-4 py-3 text-left font-medium">시각</th>
+                                    <th className="px-4 py-3 text-left font-medium">대상</th>
+                                    <th className="px-4 py-3 text-left font-medium">명령</th>
+                                    <th className="px-4 py-3 text-left font-medium">상태</th>
+                                    <th className="px-4 py-3 text-left font-medium">발행자</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {recentCommands.map((c) => {
+                                    const mu = managedUsersRows.find((m) => m.id === c.managedUserId);
+                                    return (
+                                        <tr
+                                            key={c.id}
+                                            className="border-b border-border-light last:border-0"
+                                        >
+                                            <td className="px-4 py-3 text-foreground-secondary tabular-nums">
+                                                {formatDateTime(c.issuedAt)}
+                                            </td>
+                                            <td className="px-4 py-3 font-medium text-heading">
+                                                {mu?.displayName ?? "-"}
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <CommandBadge type={c.type} />
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <StatusBadge status={c.status} />
+                                            </td>
+                                            <td className="px-4 py-3 text-foreground-secondary">
+                                                {c.actorDisplayName}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            )}
         </div>
     );
+}
+
+function CommandBadge({ type }: { type: string }) {
+    const label: Record<string, string> = {
+        lock: "잠금",
+        unlock: "해제",
+        set_pin: "PIN 변경",
+        grant_bonus: "보너스",
+    };
+    const tone: Record<string, string> = {
+        lock: "bg-error-light text-error",
+        unlock: "bg-success-light text-success",
+        set_pin: "bg-primary-light text-primary",
+        grant_bonus: "bg-warning-light text-warning",
+    };
+    return (
+        <span className={`inline-flex rounded px-2 py-0.5 text-[12px] font-medium ${tone[type] ?? "bg-background-tertiary text-foreground-secondary"}`}>
+            {label[type] ?? type}
+        </span>
+    );
+}
+
+function StatusBadge({ status }: { status: string }) {
+    const label: Record<string, string> = {
+        pending: "대기",
+        delivered: "전달됨",
+        consumed: "수신됨",
+        failed: "실패",
+        canceled: "취소",
+    };
+    const tone: Record<string, string> = {
+        pending: "bg-background-tertiary text-foreground-secondary",
+        delivered: "bg-info-light text-info",
+        consumed: "bg-success-light text-success",
+        failed: "bg-error-light text-error",
+        canceled: "bg-background-tertiary text-muted",
+    };
+    return (
+        <span className={`inline-flex rounded px-2 py-0.5 text-[12px] font-medium ${tone[status] ?? ""}`}>
+            {label[status] ?? status}
+        </span>
+    );
+}
+
+function formatDateTime(iso: string) {
+    const d = new Date(iso);
+    return d.toLocaleString("ko-KR", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    });
 }
 
 function formatRelative(iso: string) {

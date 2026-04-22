@@ -25,6 +25,7 @@ export function ManagedUsersSection({ deviceId, canManage, initialRows }: Props)
     const [isPending, startTransition] = useTransition();
     const [addOpen, setAddOpen] = useState(false);
     const [extendTarget, setExtendTarget] = useState<ManagedUser | null>(null);
+    const [pinTarget, setPinTarget] = useState<ManagedUser | null>(null);
 
     function refresh() {
         startTransition(() => router.refresh());
@@ -62,6 +63,7 @@ export function ManagedUsersSection({ deviceId, canManage, initialRows }: Props)
                             row={r}
                             canManage={canManage}
                             onExtend={() => setExtendTarget(r)}
+                            onSetPin={() => setPinTarget(r)}
                             onRefresh={refresh}
                         />
                     ))}
@@ -93,6 +95,17 @@ export function ManagedUsersSection({ deviceId, canManage, initialRows }: Props)
                     }}
                 />
             )}
+
+            {pinTarget && (
+                <SetPinModal
+                    target={pinTarget}
+                    onClose={() => setPinTarget(null)}
+                    onSuccess={() => {
+                        setPinTarget(null);
+                        refresh();
+                    }}
+                />
+            )}
         </section>
     );
 }
@@ -101,11 +114,13 @@ function ManagedUserCard({
     row,
     canManage,
     onExtend,
+    onSetPin,
     onRefresh,
 }: {
     row: ManagedUser;
     canManage: boolean;
     onExtend: () => void;
+    onSetPin: () => void;
     onRefresh: () => void;
 }) {
     const [busy, setBusy] = useState(false);
@@ -113,14 +128,15 @@ function ManagedUserCard({
         row.subscriptionExpiresAt !== null &&
         new Date(row.subscriptionExpiresAt).getTime() >= UNLIMITED_THRESHOLD;
 
-    async function action(path: string, body?: object) {
-        if (!confirm("진행하시겠습니까?")) return;
+    async function action(path: string, opts: { method?: "POST" | "DELETE"; body?: object; confirmMsg?: string } = {}) {
+        const method = opts.method ?? "POST";
+        if (opts.confirmMsg && !confirm(opts.confirmMsg)) return;
         setBusy(true);
         try {
             const res = await fetch(path, {
-                method: path.endsWith("/managed-users/" + row.id) ? "DELETE" : "POST",
-                headers: body ? { "Content-Type": "application/json" } : {},
-                body: body ? JSON.stringify(body) : undefined,
+                method,
+                headers: opts.body ? { "Content-Type": "application/json" } : {},
+                body: opts.body ? JSON.stringify(opts.body) : undefined,
             });
             if (!res.ok) {
                 const j = (await res.json().catch(() => null)) as
@@ -133,6 +149,12 @@ function ManagedUserCard({
         } finally {
             setBusy(false);
         }
+    }
+
+    async function issueCommand(type: "lock" | "unlock") {
+        await action(`/api/v1/managed-users/${row.id}/commands`, {
+            body: { type },
+        });
     }
 
     return (
@@ -167,50 +189,95 @@ function ManagedUserCard({
             </div>
 
             {canManage && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                        type="button"
-                        onClick={onExtend}
-                        disabled={busy}
-                        className="rounded-lg bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-foreground hover:bg-primary-hover disabled:opacity-60"
-                    >
-                        연장
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() =>
-                            action(
-                                `/api/v1/managed-users/${row.id}/subscription/admin-grant`,
-                                { note: "관리자 무제한 부여" },
-                            )
-                        }
-                        disabled={busy}
-                        className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-semibold text-foreground hover:bg-background-secondary disabled:opacity-60"
-                    >
-                        무제한
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() =>
-                            action(
-                                `/api/v1/managed-users/${row.id}/subscription/revoke`,
-                                {},
-                            )
-                        }
-                        disabled={busy || row.subscriptionStatus === "expired"}
-                        className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-semibold text-foreground-secondary hover:bg-background-secondary disabled:opacity-40"
-                    >
-                        구독 취소
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => action(`/api/v1/managed-users/${row.id}`)}
-                        disabled={busy}
-                        className="ml-auto rounded-lg border border-error/30 px-3 py-1.5 text-[12px] font-semibold text-error hover:bg-error-light disabled:opacity-60"
-                    >
-                        삭제
-                    </button>
-                </div>
+                <>
+                    {/* 원격 제어 */}
+                    <div className="mt-4 flex flex-wrap gap-2 border-t border-border-light pt-3">
+                        <span className="mr-1 self-center text-[11px] font-medium text-muted">
+                            제어
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => issueCommand("lock")}
+                            disabled={busy || row.subscriptionStatus === "expired"}
+                            className="rounded-lg bg-error px-3 py-1.5 text-[12px] font-semibold text-white hover:brightness-95 disabled:opacity-40"
+                        >
+                            잠금
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => issueCommand("unlock")}
+                            disabled={busy}
+                            className="rounded-lg bg-success px-3 py-1.5 text-[12px] font-semibold text-white hover:brightness-95 disabled:opacity-60"
+                        >
+                            해제
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onSetPin}
+                            disabled={busy || row.subscriptionStatus === "expired"}
+                            className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-semibold text-foreground hover:bg-background-secondary disabled:opacity-40"
+                        >
+                            PIN 변경
+                        </button>
+                    </div>
+
+                    {/* 구독 관리 */}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                        <span className="mr-1 self-center text-[11px] font-medium text-muted">
+                            구독
+                        </span>
+                        <button
+                            type="button"
+                            onClick={onExtend}
+                            disabled={busy}
+                            className="rounded-lg bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-foreground hover:bg-primary-hover disabled:opacity-60"
+                        >
+                            연장
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() =>
+                                action(
+                                    `/api/v1/managed-users/${row.id}/subscription/admin-grant`,
+                                    { body: { note: "관리자 무제한 부여" } },
+                                )
+                            }
+                            disabled={busy}
+                            className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-semibold text-foreground hover:bg-background-secondary disabled:opacity-60"
+                        >
+                            무제한
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() =>
+                                action(
+                                    `/api/v1/managed-users/${row.id}/subscription/revoke`,
+                                    {
+                                        body: {},
+                                        confirmMsg: "구독을 즉시 취소하시겠습니까?",
+                                    },
+                                )
+                            }
+                            disabled={busy || row.subscriptionStatus === "expired"}
+                            className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-semibold text-foreground-secondary hover:bg-background-secondary disabled:opacity-40"
+                        >
+                            취소
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() =>
+                                action(`/api/v1/managed-users/${row.id}`, {
+                                    method: "DELETE",
+                                    confirmMsg: `'${row.displayName}' 자녀 계정을 삭제하시겠습니까?`,
+                                })
+                            }
+                            disabled={busy}
+                            className="ml-auto rounded-lg border border-error/30 px-3 py-1.5 text-[12px] font-semibold text-error hover:bg-error-light disabled:opacity-60"
+                        >
+                            삭제
+                        </button>
+                    </div>
+                </>
             )}
         </div>
     );
@@ -420,6 +487,110 @@ function ExtendModal({
                     </button>
                 </div>
             </div>
+        </ModalShell>
+    );
+}
+
+function SetPinModal({
+    target,
+    onClose,
+    onSuccess,
+}: {
+    target: ManagedUser;
+    onClose: () => void;
+    onSuccess: () => void;
+}) {
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [pin, setPin] = useState("");
+    const [confirmPin, setConfirmPin] = useState("");
+
+    async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+        e.preventDefault();
+        setError(null);
+        if (pin !== confirmPin) {
+            setError("PIN 이 일치하지 않습니다");
+            return;
+        }
+        if (!/^[0-9]{4,8}$/.test(pin)) {
+            setError("PIN 은 4~8자리 숫자여야 합니다");
+            return;
+        }
+        setBusy(true);
+        try {
+            const res = await fetch(`/api/v1/managed-users/${target.id}/commands`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: "set_pin", pin }),
+            });
+            if (!res.ok) {
+                const j = (await res.json().catch(() => null)) as
+                    | { error?: { message?: string } }
+                    | null;
+                setError(j?.error?.message ?? "PIN 변경에 실패했습니다");
+                return;
+            }
+            onSuccess();
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <ModalShell onClose={onClose} title={`${target.displayName} PIN 변경`}>
+            <form onSubmit={onSubmit} className="space-y-3">
+                <p className="text-[12px] text-foreground-secondary">
+                    새 PIN 을 입력하세요. 변경은 자녀 PC 의 에이전트에 즉시 전달됩니다.
+                </p>
+                <Field label="새 PIN (4~8자리 숫자)">
+                    <input
+                        type="password"
+                        inputMode="numeric"
+                        pattern="[0-9]{4,8}"
+                        value={pin}
+                        onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+                        maxLength={8}
+                        required
+                        autoFocus
+                        className={inputClass}
+                        placeholder="••••"
+                    />
+                </Field>
+                <Field label="PIN 확인">
+                    <input
+                        type="password"
+                        inputMode="numeric"
+                        pattern="[0-9]{4,8}"
+                        value={confirmPin}
+                        onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
+                        maxLength={8}
+                        required
+                        className={inputClass}
+                        placeholder="다시 입력"
+                    />
+                </Field>
+                {error && (
+                    <div className="rounded-lg bg-error-light px-3 py-2 text-[13px] text-error">
+                        {error}
+                    </div>
+                )}
+                <div className="mt-4 flex justify-end gap-2">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="rounded-lg border border-border px-3 py-2 text-[13px] font-medium text-foreground hover:bg-background-secondary"
+                    >
+                        취소
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={busy}
+                        className="rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground hover:bg-primary-hover disabled:opacity-60"
+                    >
+                        {busy ? "전송 중..." : "PIN 변경"}
+                    </button>
+                </div>
+            </form>
         </ModalShell>
     );
 }
