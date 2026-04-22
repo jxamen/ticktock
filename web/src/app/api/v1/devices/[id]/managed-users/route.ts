@@ -6,6 +6,7 @@ import {
     listManagedUsers,
     ManagedUserError,
 } from "@/lib/services/subscription/managed-user.service";
+import { PlanError } from "@/lib/services/plan/plan.service";
 import { createManagedUserSchema } from "@/lib/validators/subscription.validator";
 import { ok, errors, error as errorResponse } from "@/lib/utils/response";
 
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         return ok(result, 201);
     } catch (err) {
         if (err instanceof ManagedUserError) return errorResponse(err.code, err.message, err.status);
+        if (err instanceof PlanError) return errorResponse(err.code, err.message, err.status);
         console.error("createManagedUser failed", err);
         return errors.internal();
     }

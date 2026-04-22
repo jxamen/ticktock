@@ -3,6 +3,7 @@
 -- 계정: jxamen@gmail.com / test1234 (Windows user: jxame)
 
 -- 기존 테스트 데이터 정리 (seed 재실행 대비)
+DELETE FROM commands_issued;
 DELETE FROM subscription_ledger;
 DELETE FROM managed_users;
 DELETE FROM device_permissions;
@@ -12,13 +13,14 @@ DELETE FROM password_credentials;
 DELETE FROM users;
 
 -- 1. 태훈님 계정
-INSERT INTO users (id, email, display_name, phone, firebase_uid, is_active, created_at, updated_at)
+INSERT INTO users (id, email, display_name, phone, firebase_uid, seat_limit, is_active, created_at, updated_at)
 VALUES (
     '01KPTR474H11YZXSP13E11YZXS',
     'jxamen@gmail.com',
     '태훈',
     NULL,
     NULL,
+    5,
     1,
     '2026-04-22T14:00:00.000Z',
     '2026-04-22T14:00:00.000Z'
